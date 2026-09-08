@@ -29,6 +29,15 @@ function cleanResults(value) {
     passed: item?.passed === true,
   }));
 }
+function cleanRecordingEvidence(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 30).map((item) => ({
+    index: Number.isInteger(Number(item?.index)) ? Math.max(0, Math.min(29, Number(item.index))) : 0,
+    target: cleanText(item?.target, 300),
+    durationSeconds: Number.isFinite(Number(item?.durationSeconds))
+      ? Math.max(1, Math.min(600, Math.round(Number(item.durationSeconds)))) : 1,
+  })).filter((item) => item.target);
+}
 function cleanSentencePractice(value) {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 10).map((item) => ({
@@ -51,7 +60,8 @@ function cleanDraft(body) {
     lessonTitle: cleanText(body.lessonTitle, 200), language: cleanText(body.language, 40),
     sentences: Array.isArray(body.sentences)
       ? body.sentences.slice(0, 30).map((item) => cleanText(item, 300)).filter(Boolean) : [],
-    results: cleanResults(body.results), sentencePractice: cleanSentencePractice(body.sentencePractice),
+    results: cleanResults(body.results), recordingEvidence: cleanRecordingEvidence(body.recordingEvidence),
+    sentencePractice: cleanSentencePractice(body.sentencePractice),
     englishTasks: cleanEnglishTasks(body.englishTasks),
   };
 }
@@ -84,15 +94,16 @@ export default {
       try { body = await request.json(); } catch { return json({ ok: false, error: "请求内容不是有效 JSON" }, 400); }
       if (!validDate(body.date)) return json({ ok: false, error: "日期格式必须是 YYYY-MM-DD" }, 400);
       const results = cleanResults(body.results);
+      const recordingEvidence = cleanRecordingEvidence(body.recordingEvidence);
       const sentencePractice = cleanSentencePractice(body.sentencePractice);
       const englishTasks = cleanEnglishTasks(body.englishTasks);
-      if (!results.length && !sentencePractice.length && !englishTasks.some((item) => item.done || item.score || item.note)) {
-        return json({ ok: false, error: "请至少完成一条发音、造句或英语题目后再提交" }, 400);
+      if (!results.length && !recordingEvidence.length && !sentencePractice.length && !englishTasks.some((item) => item.done || item.score || item.note)) {
+        return json({ ok: false, error: "请至少完成一条录音、造句或英语题目后再提交" }, 400);
       }
       const report = {
         id: crypto.randomUUID(), date: body.date, submittedAt: new Date().toISOString(),
         lessonTitle: cleanText(body.lessonTitle, 200), language: cleanText(body.language, 40),
-        results, sentencePractice, englishTasks,
+        results, recordingEvidence, sentencePractice, englishTasks,
       };
       await env.PRONUNCIATION_REPORTS.put("report:" + report.date + ":" + report.id, JSON.stringify(report), { expirationTtl: 60 * 60 * 24 * 180 });
       return json({ ok: true, message: "已提交，今晚复盘会自动读取。", id: report.id });
