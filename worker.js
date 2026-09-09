@@ -117,12 +117,40 @@ function cleanDraft(body) {
 function authorised(request, env) {
   return request.headers.get("authorization") === "Bearer " + env.REVIEW_TOKEN;
 }
+function cleanPlan(value) {
+  if (!validDate(value?.date) || !validDate(value?.sourceDate)) return null;
+  return {
+    version: 1,
+    date: value.date,
+    sourceDate: value.sourceDate,
+    action: value.action === "advance" ? "advance" : "repeat",
+    reason: cleanText(value.reason, 240),
+    updatedAfterReviewOf: validDate(value.updatedAfterReviewOf) ? value.updatedAfterReviewOf : "",
+    updatedAt: cleanText(value.updatedAt, 60) || new Date().toISOString(),
+  };
+}
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: JSON_HEADERS });
     if (request.method === "GET" && url.pathname === "/") return json({ ok: true, service: "hsm-pronunciation-api" });
+
+    if (request.method === "GET" && url.pathname === "/plan") {
+      const date = url.searchParams.get("date");
+      if (!validDate(date)) return json({ ok: false, error: "日期格式必须是 YYYY-MM-DD" }, 400);
+      const plan = await env.PRONUNCIATION_REPORTS.get("plan:" + date, "json");
+      return json({ ok: true, plan });
+    }
+    if (request.method === "POST" && url.pathname === "/plan") {
+      if (!authorised(request, env)) return json({ ok: false, error: "未授权" }, 401);
+      let body;
+      try { body = await request.json(); } catch { return json({ ok: false, error: "请求内容不是有效 JSON" }, 400); }
+      const plan = cleanPlan(body);
+      if (!plan) return json({ ok: false, error: "计划日期无效" }, 400);
+      await env.PRONUNCIATION_REPORTS.put("plan:" + plan.date, JSON.stringify(plan), { expirationTtl: 60 * 60 * 24 * 365 });
+      return json({ ok: true, plan });
+    }
 
     if (request.method === "POST" && url.pathname === "/assess") {
       const target = cleanText(url.searchParams.get("target"), 300);
