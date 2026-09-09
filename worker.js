@@ -19,6 +19,15 @@ function validDeviceId(value) {
 function cleanText(value, max = 500) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
 function normalizeSpeech(value) {
   return cleanText(value, 600).toLocaleLowerCase()
     .replace(/[.,!?;:'"，。！？；：\[\]()]/g, "")
@@ -126,7 +135,7 @@ export default {
       try {
         const forcedLanguage = language.startsWith("de") ? "de" : "en";
         const transcription = await env.AI.run("@cf/openai/whisper-large-v3-turbo", {
-          audio: Array.from(new Uint8Array(audio)),
+          audio: arrayBufferToBase64(audio),
           task: "transcribe",
           language: forcedLanguage,
           vad_filter: true,
