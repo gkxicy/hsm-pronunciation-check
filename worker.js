@@ -33,17 +33,66 @@ function normalizeSpeech(value) {
     .replace(/[.,!?;:'"，。！？；：\[\]()]/g, "")
     .replace(/ß/g, "ss").replace(/\s+/g, " ").trim();
 }
-function speechScore(expected, heard) {
-  const a = normalizeSpeech(expected).split(" ").filter(Boolean);
-  const b = normalizeSpeech(heard).split(" ").filter(Boolean);
+function tokenSimilarity(expectedTokens, heardTokens, substitutionCost) {
+  const a = expectedTokens;
+  const b = heardTokens;
   if (!a.length || !b.length) return 0;
   const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
   for (let j = 1; j <= b.length; j++) d[0][j] = j;
   for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) {
-    d[i][j] = a[i - 1] === b[j - 1] ? d[i - 1][j - 1]
-      : Math.min(d[i - 1][j], d[i][j - 1], d[i - 1][j - 1]) + 1;
+    d[i][j] = Math.min(
+      d[i - 1][j] + 1,
+      d[i][j - 1] + 1,
+      d[i - 1][j - 1] + substitutionCost(a[i - 1], b[j - 1]),
+    );
   }
   return Math.max(0, Math.round((1 - d[a.length][b.length] / Math.max(a.length, b.length)) * 100));
+}
+function germanPhoneticCode(value) {
+  const letters = cleanText(value, 100).toLocaleUpperCase("de-DE")
+    .replace(/Ä/g, "A").replace(/Ö/g, "O").replace(/Ü/g, "U")
+    .replace(/[^A-Z]/g, "");
+  let output = "", lastCode = "/", lastLetter = "-";
+  const put = (code) => {
+    const accepted = code !== "-", nonZero = code !== "0";
+    if (accepted && lastCode !== code && (nonZero || output.length === 0)) output += code;
+    if (accepted && nonZero) lastCode = code;
+  };
+  for (let index = 0; index < letters.length; index++) {
+    const letter = letters[index], next = letters[index + 1] || "-";
+    if ("AEIJOUY".includes(letter)) put("0");
+    else if (letter === "B" || (letter === "P" && next !== "H")) put("1");
+    else if ("DT".includes(letter) && !"CSZ".includes(next)) put("2");
+    else if ("FPVW".includes(letter)) put("3");
+    else if ("GKQ".includes(letter)) put("4");
+    else if (letter === "X" && !"CKQ".includes(lastLetter)) { put("4"); put("8"); }
+    else if ("SZ".includes(letter)) put("8");
+    else if (letter === "C") {
+      if (!output.length) put("AHKLOQRUX".includes(next) ? "4" : "8");
+      else put("SZ".includes(lastLetter) || !"AHKOQUX".includes(next) ? "8" : "4");
+    } else if ("DTX".includes(letter)) put("8");
+    else if (letter === "R") put("7");
+    else if (letter === "L") put("5");
+    else if ("MN".includes(letter)) put("6");
+    else if (letter === "H") put("-");
+    lastLetter = letter;
+  }
+  return output;
+}
+function scoreSpeech(expected, heard, language) {
+  const a = normalizeSpeech(expected).split(" ").filter(Boolean);
+  const b = normalizeSpeech(heard).split(" ").filter(Boolean);
+  const textScore = tokenSimilarity(a, b, (left, right) => left === right ? 0 : 1);
+  if (!language.startsWith("de")) return { score: textScore, textScore, phoneticScore: null, homophoneAccepted: false };
+  const phoneticScore = tokenSimilarity(a, b, (left, right) => {
+    if (left === right) return 0;
+    const leftCode = germanPhoneticCode(left), rightCode = germanPhoneticCode(right);
+    return leftCode && leftCode === rightCode ? 0 : 1;
+  });
+  return {
+    score: Math.max(textScore, phoneticScore), textScore, phoneticScore,
+    homophoneAccepted: phoneticScore > textScore,
+  };
 }
 function cleanResults(value) {
   if (!Array.isArray(value)) return [];
@@ -51,10 +100,15 @@ function cleanResults(value) {
     target: cleanText(item?.target, 300),
     transcript: cleanText(item?.transcript, 500),
     language: /^(de-DE|en-US)$/.test(item?.language) ? item.language : "",
-    assessment: item?.assessment === "cloudflare-whisper-v2-unbiased"
-      ? "cloudflare-whisper-v2-unbiased" : "",
+    assessment: ["cloudflare-whisper-v2-unbiased", "cloudflare-whisper-v3-phonetic"].includes(item?.assessment)
+      ? item.assessment : "",
     score: Number.isFinite(Number(item?.score))
       ? Math.max(0, Math.min(100, Math.round(Number(item.score)))) : null,
+    textScore: Number.isFinite(Number(item?.textScore))
+      ? Math.max(0, Math.min(100, Math.round(Number(item.textScore)))) : null,
+    phoneticScore: Number.isFinite(Number(item?.phoneticScore))
+      ? Math.max(0, Math.min(100, Math.round(Number(item.phoneticScore)))) : null,
+    homophoneAccepted: item?.homophoneAccepted === true,
     passed: item?.passed === true,
   }));
 }
@@ -172,11 +226,14 @@ export default {
           condition_on_previous_text: false,
         });
         const transcript = cleanText(transcription?.text, 500);
-        const score = speechScore(target, transcript);
+        const assessment = scoreSpeech(target, transcript, language);
         return json({
-          ok: true, transcript, score, passed: score >= 75,
+          ok: true, transcript, score: assessment.score, passed: assessment.score >= 75,
+          textScore: assessment.textScore, phoneticScore: assessment.phoneticScore,
+          homophoneAccepted: assessment.homophoneAccepted,
           language: forcedLanguage, model: "@cf/openai/whisper-large-v3-turbo",
-          scoring: "recognized-content-similarity",
+          scoring: language.startsWith("de")
+            ? "german-phonetic-or-recognized-text-v3" : "recognized-content-similarity-v3",
         });
       } catch (error) {
         return json({ ok: false, error: "语音识别服务失败：" + cleanText(error?.message, 180) }, 502);
@@ -233,3 +290,5 @@ export default {
     return json({ ok: false, error: "路径不存在" }, 404);
   },
 };
+
+export { germanPhoneticCode, scoreSpeech };
