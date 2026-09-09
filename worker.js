@@ -132,8 +132,8 @@ function cleanVocabularyProgress(value) {
 }
 function cleanLanguageExercises(value) {
   if (!Array.isArray(value)) return [];
-  return value.slice(0, 20).map((item) => ({
-    prompt: cleanText(item?.prompt, 300), response: cleanText(item?.response, 1500), answer: cleanText(item?.answer, 300),
+  return value.slice(0, 240).map((item) => ({
+    prompt: cleanText(item?.prompt, 300), response: cleanText(item?.response, 6000), answer: cleanText(item?.answer, 300),
   })).filter((item) => item.prompt || item.response);
 }
 function cleanSentencePractice(value) {

@@ -2,6 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { germanPhoneticCode, scoreSpeech } from "./worker.js";
+import worker from "./worker.js";
+
+test("bilingual vocabulary answers and long writing survive cloud draft storage", async () => {
+  let saved;
+  const exercises=Array.from({length:65},(_,i)=>({prompt:'英语 / '+i,response:i===64?'word '.repeat(500):'answer'}));
+  const response=await worker.fetch(new Request('https://test/draft',{method:'POST',body:JSON.stringify({date:'2026-09-09',deviceId:'test-device-123456789',languageExercises:exercises,sentencePractice:Array.from({length:6},(_,i)=>({word:'word'+i,sentence:'My sentence.'}))})}),{PRONUNCIATION_REPORTS:{put:async(key,value)=>{saved=JSON.parse(value)}}});
+  assert.equal(response.status,200);assert.equal(saved.languageExercises.length,65);assert.equal(saved.languageExercises[64].response.length,2499);assert.equal(saved.sentencePractice.length,6);
+});
 
 test("Kölner Phonetik matches the published reference example", () => {
   assert.equal(germanPhoneticCode("Müller-Lüdenscheidt"), "65752682");
