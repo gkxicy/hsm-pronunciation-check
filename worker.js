@@ -99,7 +99,6 @@ function cleanEnglishTasks(value) {
     userAnswer: cleanText(item?.userAnswer, 500),
     correctAnswer: cleanText(item?.correctAnswer, 500),
     evidence: cleanText(item?.evidence, 1200),
-    explanationUrl: cleanText(item?.explanationUrl, 500),
   }));
 }
 function cleanDraft(body) {
