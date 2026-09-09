@@ -50,6 +50,9 @@ function cleanResults(value) {
   return value.slice(0, 30).map((item) => ({
     target: cleanText(item?.target, 300),
     transcript: cleanText(item?.transcript, 500),
+    language: /^(de-DE|en-US)$/.test(item?.language) ? item.language : "",
+    assessment: item?.assessment === "cloudflare-whisper-v2-unbiased"
+      ? "cloudflare-whisper-v2-unbiased" : "",
     score: Number.isFinite(Number(item?.score))
       ? Math.max(0, Math.min(100, Math.round(Number(item.score)))) : null,
     passed: item?.passed === true,
@@ -140,7 +143,6 @@ export default {
           language: forcedLanguage,
           vad_filter: true,
           condition_on_previous_text: false,
-          initial_prompt: target,
         });
         const transcript = cleanText(transcription?.text, 500);
         const score = speechScore(target, transcript);
