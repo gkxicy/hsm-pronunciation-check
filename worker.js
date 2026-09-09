@@ -124,13 +124,22 @@ export default {
       if (!audio.byteLength) return json({ ok: false, error: "没有收到录音数据" }, 400);
       if (audio.byteLength > 5 * 1024 * 1024) return json({ ok: false, error: "录音超过 5MB，请缩短后重试" }, 413);
       try {
-        const transcription = await env.AI.run("@cf/openai/whisper", {
-          audio: Array.from(new Uint8Array(audio)), language: language.startsWith("de") ? "de" : "en",
+        const forcedLanguage = language.startsWith("de") ? "de" : "en";
+        const transcription = await env.AI.run("@cf/openai/whisper-large-v3-turbo", {
+          audio: Array.from(new Uint8Array(audio)),
+          task: "transcribe",
+          language: forcedLanguage,
+          vad_filter: true,
+          condition_on_previous_text: false,
           initial_prompt: target,
         });
         const transcript = cleanText(transcription?.text, 500);
         const score = speechScore(target, transcript);
-        return json({ ok: true, transcript, score, passed: score >= 75, scoring: "recognized-content-similarity" });
+        return json({
+          ok: true, transcript, score, passed: score >= 75,
+          language: forcedLanguage, model: "@cf/openai/whisper-large-v3-turbo",
+          scoring: "recognized-content-similarity",
+        });
       } catch (error) {
         return json({ ok: false, error: "语音识别服务失败：" + cleanText(error?.message, 180) }, 502);
       }
