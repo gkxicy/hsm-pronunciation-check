@@ -166,11 +166,13 @@ function cleanDraft(body) {
     languageExercises: cleanLanguageExercises(body.languageExercises),
     sentencePractice: cleanSentencePractice(body.sentencePractice),
     englishTasks: cleanEnglishTasks(body.englishTasks),
+    recordingSets: cleanRecordingSets(body.recordingSets),
   };
 }
 function authorised(request, env) {
   return typeof env.REVIEW_TOKEN === 'string' && env.REVIEW_TOKEN.length > 0 && request.headers.get("authorization") === "Bearer " + env.REVIEW_TOKEN;
 }
+function cleanRecordingSets(value){const result={};for(const lang of ['en-US','de-DE'])if(value?.[lang]){const s=value[lang];result[lang]={sentences:Array.isArray(s.sentences)?s.sentences.slice(0,30).map(x=>cleanText(x,300)):[],results:cleanResults(s.results),recordingEvidence:cleanRecordingEvidence(s.recordingEvidence)}}return result;}
 function cleanPlan(value) {
   if (!validDate(value?.date) || !validDate(value?.sourceDate)) return null;
   return {
@@ -296,6 +298,7 @@ export default {
         deviceId: validDeviceId(body.deviceId) ? body.deviceId : '',
         lessonTitle: cleanText(body.lessonTitle, 200), language: cleanText(body.language, 40),
         results, recordingEvidence, vocabularyProgress, languageExercises, sentencePractice, englishTasks,
+        recordingSets: cleanRecordingSets(body.recordingSets),
       };
       await env.PRONUNCIATION_REPORTS.put("report:" + report.date + ":" + report.id, JSON.stringify(report), { expirationTtl: 60 * 60 * 24 * 180 });
       return json({ ok: true, message: "已提交，今晚复盘会自动读取。", id: report.id });

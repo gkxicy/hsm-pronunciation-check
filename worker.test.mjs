@@ -27,6 +27,13 @@ test("Kölner Phonetik matches the published reference example", () => {
   assert.equal(germanPhoneticCode("Müller-Lüdenscheidt"), "65752682");
 });
 
+test('English and German recording sets survive cloud saving independently',async()=>{
+ let saved;
+ const body={date:'2026-09-10',deviceId:'test-device-123456789',recordingSets:{'en-US':{sentences:['My name is Test.'],results:[],recordingEvidence:[]},'de-DE':{sentences:['Ich wohne hier.'],results:[],recordingEvidence:[]}}};
+ const res=await worker.fetch(new Request('https://test/draft',{method:'POST',body:JSON.stringify(body)}),{PRONUNCIATION_REPORTS:{put:async(k,v)=>saved=JSON.parse(v)}});
+ assert.equal(res.status,200);assert.equal(saved.recordingSets['en-US'].sentences[0],'My name is Test.');assert.equal(saved.recordingSets['de-DE'].sentences[0],'Ich wohne hier.');
+});
+
 test("German homophones with different spelling are accepted", () => {
   for (const [expected, heard] of [["seit", "seid"], ["Meer", "mehr"], ["wieder", "wider"]]) {
     const result = scoreSpeech(expected, heard, "de-DE");
