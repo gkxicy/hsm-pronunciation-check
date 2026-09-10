@@ -150,7 +150,7 @@ function cleanEnglishTasks(value) {
     score: cleanText(item?.score, 80),
     note: cleanText(item?.note, 600),
     done: item?.done === true,
-    userAnswer: cleanText(item?.userAnswer, 500),
+    userAnswer: cleanText(item?.userAnswer, 12000),
     correctAnswer: cleanText(item?.correctAnswer, 500),
     evidence: cleanText(item?.evidence, 1200),
   }));
@@ -169,7 +169,7 @@ function cleanDraft(body) {
   };
 }
 function authorised(request, env) {
-  return request.headers.get("authorization") === "Bearer " + env.REVIEW_TOKEN;
+  return typeof env.REVIEW_TOKEN === 'string' && env.REVIEW_TOKEN.length > 0 && request.headers.get("authorization") === "Bearer " + env.REVIEW_TOKEN;
 }
 function cleanPlan(value) {
   if (!validDate(value?.date) || !validDate(value?.sourceDate)) return null;
@@ -190,6 +190,27 @@ export default {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: JSON_HEADERS });
     if (request.method === "GET" && url.pathname === "/") return json({ ok: true, service: "hsm-pronunciation-api" });
+
+    // Personal feedback is never placed in the public /plan response.
+    if (url.pathname === '/feedback' && request.method === 'GET') {
+      const date = url.searchParams.get('date');
+      const device = (request.headers.get('authorization') || '').replace(/^Device /, '');
+      if (!validDate(date) || !validDeviceId(device)) return json({ok:false,error:'需要原提交设备凭据'},401);
+      const listed = await env.PRONUNCIATION_REPORTS.list({prefix:`feedback:${date}:${device}:`,limit:100});
+      const feedback = await Promise.all(listed.keys.map(k=>env.PRONUNCIATION_REPORTS.get(k.name,'json')));
+      return new Response(JSON.stringify({ok:true,feedback:feedback.filter(Boolean)}), {headers:{...JSON_HEADERS,'cache-control':'no-store'}});
+    }
+    if (url.pathname === '/feedback' && request.method === 'POST') {
+      if (!authorised(request,env)) return json({ok:false,error:'未授权'},401);
+      let body; try { body=await request.json(); } catch {return json({ok:false,error:'JSON 无效'},400)}
+      if (!validDate(body.date) || !/^[a-f0-9-]{36}$/.test(body.reportId || '') || !Array.isArray(body.items) || !body.items.length || body.items.length>120) return json({ok:false,error:'批改格式无效'},400);
+      const report=await env.PRONUNCIATION_REPORTS.get(`report:${body.date}:${body.reportId}`,'json');
+      if (!report || !validDeviceId(report.deviceId)) return json({ok:false,error:'原提交没有设备归属，批改仅保存到私有复盘'},409);
+      if (JSON.stringify(body.items).length>150000) return json({ok:false,error:'批改过长'},413);
+      const feedback={date:body.date,reportId:body.reportId,submittedAt:report.submittedAt,items:body.items,updatedAt:new Date().toISOString()};
+      await env.PRONUNCIATION_REPORTS.put(`feedback:${body.date}:${report.deviceId}:${body.reportId}`,JSON.stringify(feedback),{expirationTtl:60*60*24*180});
+      return json({ok:true});
+    }
 
     if (request.method === "GET" && url.pathname === "/plan") {
       const date = url.searchParams.get("date");
@@ -272,6 +293,7 @@ export default {
       }
       const report = {
         id: crypto.randomUUID(), date: body.date, submittedAt: new Date().toISOString(),
+        deviceId: validDeviceId(body.deviceId) ? body.deviceId : '',
         lessonTitle: cleanText(body.lessonTitle, 200), language: cleanText(body.language, 40),
         results, recordingEvidence, vocabularyProgress, languageExercises, sentencePractice, englishTasks,
       };
