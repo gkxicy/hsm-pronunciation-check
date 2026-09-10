@@ -11,11 +11,20 @@ function switchRecordingLanguage(lang){
  $('status').textContent='已切换到'+(lang==='de-DE'?'德语':'英语')+'，请选择下方任意一句开始。';scheduleDraft();
 }
 const recordingLanguageStatus=document.createElement('p');recordingLanguageStatus.id='recordingLanguageStatus';recordingLanguageStatus.className='score-card';$('language').parentElement.after(recordingLanguageStatus);
+const speakingVersion=document.createElement('small');speakingVersion.id='speakingVersion';speakingVersion.textContent='朗读模块版本：20260910-2';recordingLanguageStatus.after(speakingVersion);
 $('language').onchange=()=>switchRecordingLanguage($('language').value);
 const previousDraftPayload=draftPayload;draftPayload=function(){saveRecordingSet();return {...previousDraftPayload(),recordingSets}};
 function restoreRecordingSets(draft){
  recordingSetDate=viewedDate;recordingSets=draft.recordingSets||{};
- const lang=draft.language==='德语'||draft.language==='de-DE'?'de-DE':draft.language==='英语'||draft.language==='en-US'?'en-US':lesson().lang;
+ let lang=draft.language==='德语'||draft.language==='de-DE'?'de-DE':draft.language==='英语'||draft.language==='en-US'?'en-US':lesson().lang;
+ // Repair the old initialization bug only for an exact known English bank.
+ // Keep its work under English; never discard or guess the language of custom text.
+ const isDefaultEnglish=value=>sentenceLines(value||[]).join('\n')===lessons[3].sentences.join('\n');
+ if(isDefaultEnglish(recordingSets['de-DE']?.sentences)&&!recordingSets['en-US']){recordingSets['en-US']=recordingSets['de-DE'];delete recordingSets['de-DE']}
+ if(lang==='de-DE'&&!recordingSets[lang]&&isDefaultEnglish(draft.sentences)){
+  recordingSets['en-US'] ||= {sentences:draft.sentences,results:draft.results||[],recordingEvidence:draft.recordingEvidence||[]};
+  recordingSets['de-DE']={sentences:defaultRecordingLines('de-DE'),results:[],recordingEvidence:[]};
+ }
  selectedRecordingLanguage=lang;$('language').value=lang;
  if(recordingSets[lang]){lines=sentenceLines(recordingSets[lang].sentences);results=lines.map(line=>(recordingSets[lang].results||[]).find(x=>x?.target===line));recordingEvidence=recordingSets[lang].recordingEvidence||[];$('sentences').value=lines.join('\n')}
  $('recordingLanguageStatus').textContent=(lang==='de-DE'?'德语':'英语')+'朗读 · '+lines.length+' 项；下拉框可切换对应题目。';

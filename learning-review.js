@@ -40,4 +40,5 @@ for(const lang of ['en','de'])for(const direction of ['forward','reverse']){cons
 quizStyle.textContent+=' .quiz-question-card{background:#eef6ff;border:2px solid #155eef;border-radius:12px;padding:14px;margin:12px 0;color:#10233f}#quizQuestion{display:block!important;visibility:visible!important;font-size:28px;font-weight:800;line-height:1.4;overflow-wrap:anywhere}.quiz-question-card p{margin:0 0 8px;font-size:14px}#word-quiz-entry .task-content{display:flex;flex-wrap:wrap;gap:8px}.word-quiz{width:min(94vw,520px);max-height:85dvh}';
 const originalPlanLoader=loadPlanOverride;
 loadPlanOverride=async function(){await originalPlanLoader();try{const res=await fetch('plan-corrections.json?v=20260910-2',{cache:'no-store'});if(!res.ok)return;const correction=(await res.json())[viewedDate];if(correction&&(!planOverride||!planOverride.updatedAt||Date.parse(correction.updatedAt)>Date.parse(planOverride.updatedAt))){planOverride=correction;$('planStatus').textContent='今日计划已纠正：'+correction.reason}}catch{}};
-loadPlanOverride().finally(loadDay);
+// Resolve the final loader only after all enhancement scripts are initialized.
+document.addEventListener('DOMContentLoaded',()=>{loadPlanOverride().finally(()=>loadDay())},{once:true});
