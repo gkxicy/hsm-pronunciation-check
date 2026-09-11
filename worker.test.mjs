@@ -18,9 +18,9 @@ test('feedback access is device-scoped and writers require a configured secret',
 
 test("bilingual vocabulary answers and long writing survive cloud draft storage", async () => {
   let saved;
-  const exercises=Array.from({length:65},(_,i)=>({prompt:'英语 / '+i,response:i===64?'word '.repeat(500):'answer'}));
+  const exercises=Array.from({length:65},(_,i)=>({id:i===0?'vocab:en:book:forward':'output:'+i,kind:i===0?'vocabulary':'output',prompt:'英语 / '+i,response:i===64?'word '.repeat(500):'answer'}));
   const response=await worker.fetch(new Request('https://test/draft',{method:'POST',body:JSON.stringify({date:'2026-09-09',deviceId:'test-device-123456789',languageExercises:exercises,sentencePractice:Array.from({length:6},(_,i)=>({word:'word'+i,sentence:'My sentence.'}))})}),{PRONUNCIATION_REPORTS:{put:async(key,value)=>{saved=JSON.parse(value)}}});
-  assert.equal(response.status,200);assert.equal(saved.languageExercises.length,65);assert.equal(saved.languageExercises[64].response.length,2499);assert.equal(saved.sentencePractice.length,6);
+  assert.equal(response.status,200);assert.equal(saved.languageExercises.length,65);assert.equal(saved.languageExercises[0].id,'vocab:en:book:forward');assert.equal(saved.languageExercises[0].kind,'vocabulary');assert.equal(saved.languageExercises[64].response.length,2499);assert.equal(saved.sentencePractice.length,6);
 });
 
 test("Kölner Phonetik matches the published reference example", () => {

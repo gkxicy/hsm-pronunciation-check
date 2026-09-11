@@ -12,6 +12,12 @@ const GERMAN_DAY_FOUR = [['und','和'],['aber','但是'],['oder','或者'],['jet
 const SENTENCE_INDEXES = {en:[[0,4,9],[0,4,9],[0,4,9],[0,5,9],[0,4,9],[0,4,9],[0,4,9]],de:[[0,4,9],[0,4,9],[0,5,9],[0,4,9],[0,4,9],[0,6,9],[0,4,9]]};
 function dailyWords(lang){return lang==='en'?ENGLISH_WORD_SETS[lessonIndex()]:lessonIndex()===3?GERMAN_DAY_FOUR:lesson().words}
 function taskKey(lang,word){return (lang==='en'?'英语：':'德语：')+word}
+function exerciseRecord({id,prompt,answer='',kind='lesson'}){
+ let item=languageExercises.find(x=>x.id===id)||languageExercises.find(x=>x.prompt===prompt);
+ if(!item){item={id,prompt,response:'',answer,kind};languageExercises.push(item)}
+ else {item.id=item.id||id;item.prompt=prompt;item.kind=item.kind||kind;if(!item.answer&&answer)item.answer=answer}
+ return item
+}
 function safeHtml(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function taskSection(title,id){const section=document.createElement('details');section.className='box task-section';section.open=true;section.id=id;section.innerHTML='<summary>'+title+'</summary><div class="task-content"></div>';return section}
 document.title='每日语言学习';document.querySelector('h1').textContent='每日语言学习';
@@ -34,8 +40,7 @@ renderVocabulary=function(){
   dailyWords(lang).forEach(([word,meaning],i)=>{
    const key=taskKey(lang,word),progress=vocabularyProgress.find(x=>x.word===key);root.querySelector('[data-learn="'+i+'"]').checked=progress.done;
    for(const direction of ['forward','reverse']){
-    const prompt=key+' / '+(direction==='forward'?'中文→外语':'外语→中文');let item=languageExercises.find(x=>x.prompt===prompt);
-    if(!item){item={prompt,response:'',answer:direction==='forward'?word:meaning};languageExercises.push(item)}
+    const prompt=key+' / '+(direction==='forward'?'中文→外语':'外语→中文');const item=exerciseRecord({id:'vocab:'+lang+':'+word+':'+direction,prompt,answer:direction==='forward'?word:meaning,kind:'vocabulary'});
     const input=root.querySelector('[data-'+direction+'="'+i+'"]');input.value=item.response;input.oninput=()=>{item.response=input.value;scheduleDraft()};
    }
    root.querySelector('[data-audio="'+i+'"]').onclick=()=>speakText(word,lang==='en'?'en-US':'de-DE','单词参考音');
@@ -62,9 +67,9 @@ const OUTPUT_PROMPTS=[
  ['英语 / 听力错题复做得分、判断与匹配得分、两条错因','德语 / 本周60词双向自测结果','德语 / 一分钟自我介绍全文、两次录音记录'],
  ['英语 / 本周书信改写全文（至少150词）','英语 / 20词默写结果','英语 / 本周学习总结','德语 / 20词周测结果、可独立说的句子与本周总结']
 ];
-function renderOutputs(){const root=outputSection.querySelector('.task-content');const prompts=['英语 / 学习分钟','德语 / 学习分钟',...OUTPUT_PROMPTS[lessonIndex()]];root.innerHTML=prompts.map((prompt,i)=>'<label>'+safeHtml(prompt)+'<textarea data-output="'+i+'" placeholder="在这里完成并保存，复盘会读取"></textarea><small data-count="'+i+'"></small></label>').join('');prompts.forEach((prompt,i)=>{let item=languageExercises.find(x=>x.prompt===prompt);if(!item){item={prompt,response:'',answer:''};languageExercises.push(item)}const input=root.querySelector('[data-output="'+i+'"]'),count=root.querySelector('[data-count="'+i+'"]');input.value=item.response;const update=()=>{count.textContent='已写 '+input.value.trim().split(/\s+/).filter(Boolean).length+' 词'};input.oninput=()=>{item.response=input.value;update();scheduleDraft()};update()})}
+function renderOutputs(){const root=outputSection.querySelector('.task-content');const prompts=['英语 / 学习分钟','德语 / 学习分钟',...OUTPUT_PROMPTS[lessonIndex()]];root.innerHTML=prompts.map((prompt,i)=>'<label>'+safeHtml(prompt)+'<textarea data-output="'+i+'" placeholder="在这里完成并保存，复盘会读取"></textarea><small data-count="'+i+'"></small></label>').join('');prompts.forEach((prompt,i)=>{const item=exerciseRecord({id:'output:'+lessonIndex()+':'+i,prompt,kind:'output'});const input=root.querySelector('[data-output="'+i+'"]'),count=root.querySelector('[data-count="'+i+'"]');input.value=item.response;const update=()=>{count.textContent='已写 '+input.value.trim().split(/\s+/).filter(Boolean).length+' 词'};input.oninput=()=>{item.response=input.value;update();scheduleDraft()};update()})}
 const baseRenderExercises=renderExercises;
-renderExercises=function(){const saved=languageExercises.filter(x=>x.prompt.includes(' / '));languageExercises=languageExercises.filter(x=>!x.prompt.includes(' / '));baseRenderExercises();languageExercises.push(...saved);renderOutputs()};
+renderExercises=function(){baseRenderExercises();renderOutputs()};
 // Save the complete payload locally immediately, and to Cloudflare after typing stops.
 const localDraftKey=()=> 'hsm-full-draft:'+viewedDate;
 scheduleDraft=function(){const payload={...draftPayload(),updatedAt:new Date().toISOString()};localStorage.setItem(localDraftKey(),JSON.stringify(payload));$('saveNotice').textContent='已暂存到本机，正在同步云端…';clearTimeout(draftTimer);draftTimer=setTimeout(()=>saveCloudDraft(payload),700)};

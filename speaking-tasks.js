@@ -41,7 +41,10 @@ renderEnglish=function(){
  for(const line of lessons[3].sentences){const li=document.createElement('li');li.textContent=line;list.append(li)}
  const instruction=document.createElement('p');instruction.textContent='括号内换成真实信息；学位、工作经历也按实际情况修改，不符合的句子不要照读。';
  const button=document.createElement('button');button.type='button';button.id='startEnglishSpeaking';button.textContent='在本页练习这六句（英语）';button.onclick=()=>{switchRecordingLanguage('en-US');const panel=$('recording-panel');panel.open=true;panel.scrollIntoView({behavior:'smooth',block:'start'})};
- const completed=document.createElement('label'),check=document.createElement('input');check.type='checkbox';check.checked=englishTasks[0].done;check.onchange=()=>{englishTasks[0].done=check.checked;scheduleDraft()};completed.append(check,'我已完成本次口语练习');root.append(instruction,list,button,completed);
+ const germanTitle=document.createElement('h3');germanTitle.textContent='同日德语发音任务（9句，全部显示）';
+ const germanList=document.createElement('ol');germanList.id='germanSpeakingQuestions';GERMAN_SPEAKING_DAY4.forEach(line=>{const li=document.createElement('li');li.textContent=line;germanList.append(li)});
+ const germanButton=document.createElement('button');germanButton.type='button';germanButton.className='secondary';germanButton.textContent='切换到德语并练习这9句';germanButton.onclick=()=>{switchRecordingLanguage('de-DE');const panel=$('recording-panel');panel.open=true;panel.scrollIntoView({behavior:'smooth',block:'start'})};
+ const completed=document.createElement('label'),check=document.createElement('input');check.type='checkbox';check.checked=englishTasks[0].done;check.onchange=()=>{englishTasks[0].done=check.checked;scheduleDraft()};completed.append(check,'我已完成本次口语练习');root.append(instruction,list,button,completed,germanTitle,germanList,germanButton);
  $('mistakeReview').textContent='口语不填写阅读题的正确答案、定位句或错题号；录音结果由提交记录进入复盘。';
 };
 renderEnglish();

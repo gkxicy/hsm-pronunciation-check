@@ -30,9 +30,25 @@ function applyRemedialMode(){
  if(repeat){reviewSection.open=true;reviewSection.querySelector('summary').textContent='本日只补未完成 / 未通过项目（已通过的不重做）';if(!planOverride.carryover?.length)reviewSection.querySelector('.task-content').textContent='系统还没有逐项补做清单，不能安排整天重做。等待补齐验收依据。';$('planStatus').textContent='定向补做：只做清单中的项目，不是重做昨天全部作业。录音和随机词测可按清单需要使用。'}else reviewSection.querySelector('summary').textContent='今日追加补练（仅少量未完成 / 未通过项目）';
 }
 const reviewOutputRenderer=renderOutputs;renderOutputs=function(){reviewOutputRenderer();renderTargetedReview();applyRemedialMode()};
-// A generic course is not an explanation of the specific question.
-for(const day of [2,6]){for(const task of ENGLISH_TASKS[day])task.explanationUrl=''}
-const writingRenderer=renderEnglish;renderEnglish=function(){writingRenderer();if([2,6].includes(lessonIndex())){const notice=document.createElement('p');notice.className='score-card';notice.textContent='已提交的初稿无需重复提交，也无需抄录官方原题。具体批改应以已安排的原题和提交记录为依据；读取失败属于系统问题，不算未完成。收到具体反馈后只修改指定部分。';$('englishTasks').prepend(notice)}};
+function appendListeningGuides(){
+ const root=$('englishTasks');if(!root)return;
+ root.querySelectorAll('.line').forEach((line,index)=>{
+  const task=englishTasks[index],spec=(ENGLISH_TASKS[lessonIndex()]||[])[index];if(!task||!/^Listening/i.test(task.title)||line.querySelector('.generated-listening-guide'))return;
+  const guide=document.createElement('details');guide.className='generated-listening-guide';
+  const summary=document.createElement('summary');summary.textContent='做完后打开：本题解析材料与步骤';guide.append(summary);
+  const title=task.title.toLowerCase();
+  const steps=title.includes('地图')?'页面解析步骤：1）先看题目中的地点和方向词；2）听到起点后沿路线移动；3）把“左/右、对面、旁边”等定位词写在原图上；4）重听错题片段，记录“定位词 → 正确地点”。':title.includes('填空')?'页面解析步骤：1）先圈出空格前后的词性和数量单位；2）听到答案后先写声音，再用 transcript 核对拼写；3）把漏听原因标为连读、拼写或同义替换；4）只重做错空。':title.includes('多选')?'页面解析步骤：1）先读选项并圈出每项的独特关键词；2）听录音时记录“支持证据”而不是凭印象选；3）每个选项都回到原句核对，排除只部分符合的干扰项；4）把错项的原句或时间点填入定位证据。':'页面解析步骤：1）先读题干和选项，圈出关键词；2）第一次听只记答案和证据词；3）用官方答案与 transcript 对照；4）把错题写成“我的答案 → 正确答案 → 原文证据 → 错因”，再只重做错题。';
+  const paragraph=document.createElement('p');paragraph.textContent=steps;guide.append(paragraph);
+  const links=document.createElement('p');links.className='hint';
+  if(spec?.answerUrl){const answer=document.createElement('a');answer.href=spec.answerUrl;answer.target='_blank';answer.rel='noopener';answer.textContent='官方答案';links.append(answer)}
+  if(spec?.transcriptUrl){if(links.childNodes.length)links.append(' · ');const transcript=document.createElement('a');transcript.href=spec.transcriptUrl;transcript.target='_blank';transcript.rel='noopener';transcript.textContent='官方 transcript';links.append(transcript)}
+  if(spec?.explanationUrl){if(links.childNodes.length)links.append(' · ');const video=document.createElement('a');video.href=spec.explanationUrl;video.target='_blank';video.rel='noopener';video.textContent='题型方法视频（不是原题逐题解析）';links.append(video)}
+  guide.append(links);
+  const promise=document.createElement('p');promise.className='hint';promise.textContent=spec?.transcriptUrl?'核对顺序：官方答案 → transcript 定位原句 → 写清错因 → 只重做错题。':'当前只有已核实的官方答案。提交作答后由系统生成逐题文字解析；不会要求你自己凭空分析，也不会拿通用视频冒充原题解析。';guide.append(promise);
+  line.append(guide);
+ });
+}
+const writingRenderer=renderEnglish;renderEnglish=function(){writingRenderer();appendListeningGuides();if([2,6].includes(lessonIndex())){const notice=document.createElement('p');notice.className='score-card';notice.textContent='已提交的初稿无需重复提交，也无需抄录官方原题。具体批改应以已安排的原题和提交记录为依据；读取失败属于系统问题，不算未完成。收到具体反馈后只修改指定部分。';$('englishTasks').prepend(notice)}};
 const quizStyle=document.createElement('style');quizStyle.textContent='.quiz-controls{grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap}.word-quiz{box-sizing:border-box;width:min(92vw,520px);max-height:90dvh;overflow:auto;border:0;border-radius:18px;padding:24px;color:#172033}.word-quiz::backdrop{background:#10233fee}.word-quiz h2{font-size:28px;margin:24px 0}.quiz-close{float:right}.word-quiz input{margin:10px 0 18px}.word-quiz button{min-height:44px}#targeted-review{border-left:4px solid #e9a441}.word{min-width:0}';document.head.append(quizStyle);
 const quizEntry=taskSection('单词随机测试 · 英语 / 德语','word-quiz-entry');
 taskNav.after(quizEntry);
