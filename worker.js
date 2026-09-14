@@ -183,6 +183,9 @@ function cleanPlan(value) {
     action: value.action === "advance" ? "advance" : "repeat",
     reason: cleanText(value.reason, 240),
     carryover: Array.isArray(value.carryover) ? value.carryover.slice(0,100).filter(item => typeof item?.title === 'string' && typeof item?.feedback === 'string').map(item => ({title:cleanText(item.title,200),feedback:cleanText(item.feedback,4000)})) : [],
+    weeklyReplan: value.weeklyReplan === true,
+    weekStart: validDate(value.weekStart) ? value.weekStart : "",
+    weeklyTask: cleanText(value.weeklyTask, 6000),
     updatedAfterReviewOf: validDate(value.updatedAfterReviewOf) ? value.updatedAfterReviewOf : "",
     updatedAt: cleanText(value.updatedAt, 60) || new Date().toISOString(),
   };

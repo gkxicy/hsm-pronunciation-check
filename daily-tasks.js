@@ -9,6 +9,16 @@ const ENGLISH_WORD_SETS = [
 ];
 ENGLISH_WORD_SETS.push(ENGLISH_WORD_SETS.slice(0,6).flat().filter((_,i)=>i%3===0));
 const GERMAN_DAY_FOUR = [['und','和'],['aber','但是'],['oder','或者'],['jetzt','现在'],['heute','今天'],['morgen','明天'],['hier','这里'],['dort','那里'],['gern','乐意'],['bitte','请 / 不客气']];
+// The recording area needs speakable sentences. Never fall back to the vocabulary words themselves.
+const ENGLISH_SPEAKING_LINES = [
+ ['I need to book a ticket.','Please check my address and schedule.','The appointment is available tomorrow.','I have my luggage and receipt.','I need to make a payment.'],
+ ['I am looking for an employer.','There is a vacancy in the company.','My contract starts next week.','My colleague works the morning shift.','I have completed the required training.'],
+ ['I would like to inquire about the position.','Could you confirm the deadline?','Please provide the required documents.','Can we arrange a suitable meeting?','I appreciate your help with my request.'],
+ lessons[3].sentences,
+ ['The entrance is across from the exit.','The cafe is opposite the station.','Please turn left and follow this route.','The platform is nearby.','I need information about the train.'],
+ ['Please read the notice carefully.','The company will advertise the new service.','These facilities are available to all staff.','Safety training is compulsory.','The refund is for a temporary problem.'],
+ ['I need to book a ticket for my trip.','Please check the schedule and address.','The receipt confirms my payment.','The employer sent me a new contract.','I need more information about the job.']
+];
 const SENTENCE_INDEXES = {en:[[0,4,9],[0,4,9],[0,4,9],[0,5,9],[0,4,9],[0,4,9],[0,4,9]],de:[[0,4,9],[0,4,9],[0,5,9],[0,4,9],[0,4,9],[0,6,9],[0,4,9]]};
 function dailyWords(lang){return lang==='en'?ENGLISH_WORD_SETS[lessonIndex()]:lessonIndex()===3?GERMAN_DAY_FOUR:lesson().words}
 function taskKey(lang,word){return (lang==='en'?'英语：':'德语：')+word}

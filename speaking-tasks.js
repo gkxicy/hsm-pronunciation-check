@@ -1,6 +1,6 @@
 const GERMAN_SPEAKING_DAY4=['Ich bin [姓名].','Ich bin Chinese.','Ich bin Student.','Ich komme aus China.','Ich komme aus [省份].','Ich komme aus [城市].','Ich wohne in [城市].','Ich wohne in China.','Ich wohne hier.'];
 let recordingSets={},recordingSetDate='',selectedRecordingLanguage=$('language').value,assessmentBusy=false;
-function defaultRecordingLines(lang){if(lang==='de-DE')return lessonIndex()===3?GERMAN_SPEAKING_DAY4:lesson().sentences;return lessonIndex()===3?lessons[3].sentences:dailyWords('en').map(([word])=>word)}
+function defaultRecordingLines(lang){if(lang==='de-DE')return lessonIndex()===3?GERMAN_SPEAKING_DAY4:lesson().sentences;return ENGLISH_SPEAKING_LINES[lessonIndex()]||lessons[3].sentences}
 function saveRecordingSet(){if(recordingSetDate!==viewedDate){recordingSets={};recordingSetDate=viewedDate;return}recordingSets[selectedRecordingLanguage]={sentences:sentenceLines($('sentences').value),results:results.filter(Boolean),recordingEvidence:[...recordingEvidence]}}
 function switchRecordingLanguage(lang){
  if(activeRecorder||assessmentBusy){$('language').value=selectedRecordingLanguage;$('status').textContent='录音或识别尚未结束，请结束后再切换语言。';return}
@@ -11,7 +11,7 @@ function switchRecordingLanguage(lang){
  $('status').textContent='已切换到'+(lang==='de-DE'?'德语':'英语')+'，请选择下方任意一句开始。';scheduleDraft();
 }
 const recordingLanguageStatus=document.createElement('p');recordingLanguageStatus.id='recordingLanguageStatus';recordingLanguageStatus.className='score-card';$('language').parentElement.after(recordingLanguageStatus);
-const speakingVersion=document.createElement('small');speakingVersion.id='speakingVersion';speakingVersion.textContent='朗读模块版本：20260910-2';recordingLanguageStatus.after(speakingVersion);
+const speakingVersion=document.createElement('small');speakingVersion.id='speakingVersion';speakingVersion.textContent='朗读模块版本：20260914-1';recordingLanguageStatus.after(speakingVersion);
 $('language').onchange=()=>switchRecordingLanguage($('language').value);
 const previousDraftPayload=draftPayload;draftPayload=function(){saveRecordingSet();return {...previousDraftPayload(),recordingSets}};
 function restoreRecordingSets(draft){
@@ -20,6 +20,9 @@ function restoreRecordingSets(draft){
  // Repair the old initialization bug only for an exact known English bank.
  // Keep its work under English; never discard or guess the language of custom text.
  const isDefaultEnglish=value=>sentenceLines(value||[]).join('\n')===lessons[3].sentences.join('\n');
+ const isLegacyEnglishWords=value=>{const lines=sentenceLines(value||[]);return lines.length>=3&&lines.every(line=>/^[A-Za-z]+$/.test(line))};
+ for(const key of ['en-US','de-DE'])if(key==='en-US'&&isLegacyEnglishWords(recordingSets[key]?.sentences)){recordingSets[key]={sentences:defaultRecordingLines('en-US'),results:[],recordingEvidence:[]}}
+ if(lang==='en-US'&&!recordingSets[lang]&&isLegacyEnglishWords(draft.sentences)){recordingSets[lang]={sentences:defaultRecordingLines('en-US'),results:[],recordingEvidence:[]}}
  if(isDefaultEnglish(recordingSets['de-DE']?.sentences)&&!recordingSets['en-US']){recordingSets['en-US']=recordingSets['de-DE'];delete recordingSets['de-DE']}
  if(lang==='de-DE'&&!recordingSets[lang]&&isDefaultEnglish(draft.sentences)){
   recordingSets['en-US'] ||= {sentences:draft.sentences,results:draft.results||[],recordingEvidence:draft.recordingEvidence||[]};
