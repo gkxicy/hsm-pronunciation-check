@@ -34,6 +34,15 @@ test('English and German recording sets survive cloud saving independently',asyn
  assert.equal(res.status,200);assert.equal(saved.recordingSets['en-US'].sentences[0],'My name is Test.');assert.equal(saved.recordingSets['de-DE'].sentences[0],'Ich wohne hier.');
 });
 
+test('Japanese recording data survives cloud saving and kana variants are normalized',async()=>{
+ let saved;
+ const body={date:'2026-09-15',deviceId:'test-device-123456789',recordingSets:{'ja-JP':{sentences:['アイウエオ'],results:[{target:'アイウエオ',transcript:'あいうえお',language:'ja-JP',assessment:'cloudflare-whisper-v4-japanese',score:100,passed:true}],recordingEvidence:[]}}};
+ const res=await worker.fetch(new Request('https://test/draft',{method:'POST',body:JSON.stringify(body)}),{PRONUNCIATION_REPORTS:{put:async(k,v)=>saved=JSON.parse(v)}});
+ assert.equal(res.status,200);assert.equal(saved.recordingSets['ja-JP'].sentences[0],'アイウエオ');assert.equal(saved.recordingSets['ja-JP'].results[0].language,'ja-JP');
+ assert.equal(scoreSpeech('アイウエオ','あいうえお','ja-JP').score,100);
+ assert.ok(scoreSpeech('あいうえお','かきくけこ','ja-JP').score<75);
+});
+
 test("German homophones with different spelling are accepted", () => {
   for (const [expected, heard] of [["seit", "seid"], ["Meer", "mehr"], ["wieder", "wider"]]) {
     const result = scoreSpeech(expected, heard, "de-DE");

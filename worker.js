@@ -33,6 +33,11 @@ function normalizeSpeech(value) {
     .replace(/[.,!?;:'"，。！？；：\[\]()]/g, "")
     .replace(/ß/g, "ss").replace(/\s+/g, " ").trim();
 }
+function normalizeJapanese(value) {
+  return cleanText(value, 600).normalize("NFKC")
+    .replace(/[\s.,!?;:'\"，。！？；：「」『』（）()\[\]]/g, "")
+    .replace(/[ァ-ヶ]/g, (letter) => String.fromCharCode(letter.charCodeAt(0) - 0x60));
+}
 function tokenSimilarity(expectedTokens, heardTokens, substitutionCost) {
   const a = expectedTokens;
   const b = heardTokens;
@@ -80,6 +85,11 @@ function germanPhoneticCode(value) {
   return output;
 }
 function scoreSpeech(expected, heard, language) {
+  if (language.startsWith("ja")) {
+    const a = [...normalizeJapanese(expected)], b = [...normalizeJapanese(heard)];
+    const textScore = tokenSimilarity(a, b, (left, right) => left === right ? 0 : 1);
+    return { score: textScore, textScore, phoneticScore: null, homophoneAccepted: false };
+  }
   const a = normalizeSpeech(expected).split(" ").filter(Boolean);
   const b = normalizeSpeech(heard).split(" ").filter(Boolean);
   const textScore = tokenSimilarity(a, b, (left, right) => left === right ? 0 : 1);
@@ -99,8 +109,8 @@ function cleanResults(value) {
   return value.slice(0, 30).map((item) => ({
     target: cleanText(item?.target, 300),
     transcript: cleanText(item?.transcript, 500),
-    language: /^(de-DE|en-US)$/.test(item?.language) ? item.language : "",
-    assessment: ["cloudflare-whisper-v2-unbiased", "cloudflare-whisper-v3-phonetic"].includes(item?.assessment)
+    language: /^(de-DE|en-US|ja-JP)$/.test(item?.language) ? item.language : "",
+    assessment: ["cloudflare-whisper-v2-unbiased", "cloudflare-whisper-v3-phonetic", "cloudflare-whisper-v4-japanese"].includes(item?.assessment)
       ? item.assessment : "",
     score: Number.isFinite(Number(item?.score))
       ? Math.max(0, Math.min(100, Math.round(Number(item.score)))) : null,
@@ -173,7 +183,7 @@ function cleanDraft(body) {
 function authorised(request, env) {
   return typeof env.REVIEW_TOKEN === 'string' && env.REVIEW_TOKEN.length > 0 && request.headers.get("authorization") === "Bearer " + env.REVIEW_TOKEN;
 }
-function cleanRecordingSets(value){const result={};for(const lang of ['en-US','de-DE'])if(value?.[lang]){const s=value[lang];result[lang]={sentences:Array.isArray(s.sentences)?s.sentences.slice(0,30).map(x=>cleanText(x,300)):[],results:cleanResults(s.results),recordingEvidence:cleanRecordingEvidence(s.recordingEvidence)}}return result;}
+function cleanRecordingSets(value){const result={};for(const lang of ['en-US','de-DE','ja-JP'])if(value?.[lang]){const s=value[lang];result[lang]={sentences:Array.isArray(s.sentences)?s.sentences.slice(0,30).map(x=>cleanText(x,300)):[],results:cleanResults(s.results),recordingEvidence:cleanRecordingEvidence(s.recordingEvidence)}}return result;}
 function cleanPlan(value) {
   if (!validDate(value?.date) || !validDate(value?.sourceDate)) return null;
   return {
@@ -237,7 +247,7 @@ export default {
     if (request.method === "POST" && url.pathname === "/assess") {
       const target = cleanText(url.searchParams.get("target"), 300);
       const language = cleanText(url.searchParams.get("language"), 10);
-      if (!target || !/^(de-DE|en-US)$/.test(language)) return json({ ok: false, error: "目标句或语言无效" }, 400);
+      if (!target || !/^(de-DE|en-US|ja-JP)$/.test(language)) return json({ ok: false, error: "目标句或语言无效" }, 400);
       if (!env.AI) return json({ ok: false, error: "Cloudflare Worker 尚未绑定 Workers AI（变量名必须为 AI）" }, 503);
       const declaredSize = Number(request.headers.get("content-length") || 0);
       if (declaredSize > 5 * 1024 * 1024) return json({ ok: false, error: "录音超过 5MB，请缩短后重试" }, 413);
@@ -245,7 +255,7 @@ export default {
       if (!audio.byteLength) return json({ ok: false, error: "没有收到录音数据" }, 400);
       if (audio.byteLength > 5 * 1024 * 1024) return json({ ok: false, error: "录音超过 5MB，请缩短后重试" }, 413);
       try {
-        const forcedLanguage = language.startsWith("de") ? "de" : "en";
+        const forcedLanguage = language.startsWith("de") ? "de" : language.startsWith("ja") ? "ja" : "en";
         const transcription = await env.AI.run("@cf/openai/whisper-large-v3-turbo", {
           audio: arrayBufferToBase64(audio),
           task: "transcribe",
@@ -261,7 +271,8 @@ export default {
           homophoneAccepted: assessment.homophoneAccepted,
           language: forcedLanguage, model: "@cf/openai/whisper-large-v3-turbo",
           scoring: language.startsWith("de")
-            ? "german-phonetic-or-recognized-text-v3" : "recognized-content-similarity-v3",
+            ? "german-phonetic-or-recognized-text-v3" : language.startsWith("ja")
+              ? "japanese-normalized-character-similarity-v1" : "recognized-content-similarity-v3",
         });
       } catch (error) {
         return json({ ok: false, error: "语音识别服务失败：" + cleanText(error?.message, 180) }, 502);
