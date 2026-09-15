@@ -201,6 +201,43 @@ function cleanPlan(value) {
   };
 }
 
+async function triggerSubmissionReview(env, report) {
+  if (typeof env.GITHUB_DISPATCH_TOKEN !== "string" || !env.GITHUB_DISPATCH_TOKEN.trim()) {
+    return { triggered: false, reason: "GitHub 自动复盘密钥尚未配置，将由 23:00 定时任务兜底" };
+  }
+  const repository = typeof env.GITHUB_REPOSITORY === "string" && /^[\w.-]+\/[\w.-]+$/.test(env.GITHUB_REPOSITORY)
+    ? env.GITHUB_REPOSITORY : "gkxicy/hsm-life-system";
+  const markerKey = `review-dispatch:${report.date}:${report.deviceId || "anonymous"}`;
+  const previous = await env.PRONUNCIATION_REPORTS.get(markerKey, "json");
+  const now = Date.now();
+  if (previous && now - Number(previous.dispatchedAt || 0) < 180_000) {
+    return { triggered: true, deduplicated: true, reason: "自动复盘已经在队列中" };
+  }
+  try {
+    const response = await fetch(`https://api.github.com/repos/${repository}/dispatches`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${env.GITHUB_DISPATCH_TOKEN}`,
+        accept: "application/vnd.github+json",
+        "content-type": "application/json",
+        "user-agent": "hsm-language-study-worker",
+        "x-github-api-version": "2022-11-28",
+      },
+      body: JSON.stringify({
+        event_type: "language-study-submitted",
+        client_payload: { date: report.date, reportId: report.id },
+      }),
+    });
+    if (response.status !== 204) {
+      return { triggered: false, reason: `GitHub 自动复盘触发失败（HTTP ${response.status}），将由 23:00 定时任务兜底` };
+    }
+    await env.PRONUNCIATION_REPORTS.put(markerKey, JSON.stringify({ reportId: report.id, dispatchedAt: now }), { expirationTtl: 60 * 60 * 48 });
+    return { triggered: true, deduplicated: false, reason: "已启动云端复盘" };
+  } catch (error) {
+    return { triggered: false, reason: `GitHub 自动复盘暂时不可用，将由 23:00 定时任务兜底：${cleanText(error?.message, 120)}` };
+  }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -316,7 +353,15 @@ export default {
         recordingSets: cleanRecordingSets(body.recordingSets),
       };
       await env.PRONUNCIATION_REPORTS.put("report:" + report.date + ":" + report.id, JSON.stringify(report), { expirationTtl: 60 * 60 * 24 * 180 });
-      return json({ ok: true, message: "已提交，今晚复盘会自动读取。", id: report.id });
+      const review = await triggerSubmissionReview(env, report);
+      return json({
+        ok: true,
+        message: review.triggered ? "已提交，并已启动云端复盘。" : "已提交；自动复盘未启动，将由 23:00 定时任务兜底。",
+        id: report.id,
+        reviewTriggered: review.triggered,
+        reviewDeduplicated: review.deduplicated === true,
+        reviewStatus: review.reason,
+      });
     }
     if (request.method === "GET" && url.pathname === "/reports") {
       if (!authorised(request, env)) return json({ ok: false, error: "未授权" }, 401);

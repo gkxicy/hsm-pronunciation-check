@@ -1,7 +1,7 @@
 "use strict";
 
 const API = "https://hsm-pronunciation-api.huangsm666.workers.dev";
-const DATA_URL = "annual-language-data.json?v=20260915-annual-2";
+const DATA_URL = "annual-language-data.json?v=20260915-annual-3";
 const DEVICE_KEY = "hsm-pronunciation-device-v1";
 const LOCAL_PREFIX = "hsm-annual-language-draft:";
 const $ = (selector) => document.querySelector(selector);
@@ -348,7 +348,7 @@ async function submit() {
   await saveCloud(); const button = $("#submit"); button.disabled = true; $("#submitStatus").textContent = "正在提交…";
   try {
     const response = await fetch(`${API}/submit`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(state.draft) }); const data = await response.json(); if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
-    $("#submitStatus").textContent = "已提交。晚间复盘只会要求补做未完成或未通过项目。"; await loadFeedback();
+    $("#submitStatus").textContent = `${data.message || "已提交。"}\n${data.reviewStatus || "晚间复盘只会要求补做未完成或未通过项目。"}`; await loadFeedback();
   } catch (error) { $("#submitStatus").textContent = `提交失败：${error.message}。本机进度仍在，可稍后重试。`; } finally { button.disabled = false; }
 }
 async function loadFeedback() {

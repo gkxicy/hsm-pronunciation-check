@@ -23,6 +23,56 @@ test("bilingual vocabulary answers and long writing survive cloud draft storage"
   assert.equal(response.status,200);assert.equal(saved.languageExercises.length,65);assert.equal(saved.languageExercises[0].id,'vocab:en:book:forward');assert.equal(saved.languageExercises[0].kind,'vocabulary');assert.equal(saved.languageExercises[64].response.length,2499);assert.equal(saved.sentencePractice.length,6);
 });
 
+test("final submission stores the report before triggering the fixed GitHub review event", async () => {
+  const db = new Map();
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url: String(url), options });
+    return new Response(null, { status: 204 });
+  };
+  try {
+    const env = {
+      GITHUB_DISPATCH_TOKEN: "test-secret",
+      PRONUNCIATION_REPORTS: {
+        get: async (key, type) => {
+          const value = db.get(key);
+          return type === "json" && value ? JSON.parse(value) : value;
+        },
+        put: async (key, value) => db.set(key, value),
+      },
+    };
+    const body = {
+      date: "2026-09-15",
+      deviceId: "test-device-123456789",
+      vocabularyProgress: [{ word: "日语：あい", done: true }],
+    };
+    const response = await worker.fetch(new Request("https://test/submit", { method: "POST", body: JSON.stringify(body) }), env);
+    const payload = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(payload.reviewTriggered, true);
+    assert.equal([...db.keys()].some((key) => key.startsWith("report:2026-09-15:")), true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, "https://api.github.com/repos/gkxicy/hsm-life-system/dispatches");
+    const event = JSON.parse(calls[0].options.body);
+    assert.deepEqual(event, { event_type: "language-study-submitted", client_payload: { date: "2026-09-15", reportId: payload.id } });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("submission still succeeds when the automatic-review secret is absent", async () => {
+  const db = new Map();
+  const response = await worker.fetch(new Request("https://test/submit", {
+    method: "POST",
+    body: JSON.stringify({ date: "2026-09-15", deviceId: "test-device-123456789", vocabularyProgress: [{ word: "英语：schedule", done: true }] }),
+  }), { PRONUNCIATION_REPORTS: { put: async (key, value) => db.set(key, value) } });
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.reviewTriggered, false);
+  assert.match(payload.reviewStatus, /23:00/);
+});
+
 test("Kölner Phonetik matches the published reference example", () => {
   assert.equal(germanPhoneticCode("Müller-Lüdenscheidt"), "65752682");
 });
