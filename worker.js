@@ -202,14 +202,18 @@ function cleanPlan(value) {
 }
 
 async function triggerSubmissionReview(env, report) {
+  const now = Date.now();
+  const scheduledReviewAt = Date.parse(`${report.date}T23:00:00+08:00`);
+  if (Number.isFinite(scheduledReviewAt) && now <= scheduledReviewAt) {
+    return { triggered: false, scheduled: true, reason: "作业已保存；北京时间 23:00 前提交，将由今晚 23:00 定时复盘统一处理" };
+  }
   if (typeof env.GITHUB_DISPATCH_TOKEN !== "string" || !env.GITHUB_DISPATCH_TOKEN.trim()) {
-    return { triggered: false, reason: "GitHub 自动复盘密钥尚未配置，将由 23:00 定时任务兜底" };
+    return { triggered: false, reason: "作业已保存，但 23:00 后自动补充复盘密钥尚未配置；请配置后重新提交或手动重跑复盘" };
   }
   const repository = typeof env.GITHUB_REPOSITORY === "string" && /^[\w.-]+\/[\w.-]+$/.test(env.GITHUB_REPOSITORY)
     ? env.GITHUB_REPOSITORY : "gkxicy/hsm-life-system";
   const markerKey = `review-dispatch:${report.date}:${report.deviceId || "anonymous"}`;
   const previous = await env.PRONUNCIATION_REPORTS.get(markerKey, "json");
-  const now = Date.now();
   if (previous && now - Number(previous.dispatchedAt || 0) < 180_000) {
     return { triggered: true, deduplicated: true, reason: "自动复盘已经在队列中" };
   }
@@ -356,9 +360,14 @@ export default {
       const review = await triggerSubmissionReview(env, report);
       return json({
         ok: true,
-        message: review.triggered ? "已提交，并已启动云端复盘。" : "已提交；自动复盘未启动，将由 23:00 定时任务兜底。",
+        message: review.triggered
+          ? "已提交，并已启动云端补充复盘。"
+          : review.scheduled
+            ? "已提交；将在今晚 23:00 统一复盘。"
+            : "已提交；23:00 后自动补充复盘未启动，请按提示处理。",
         id: report.id,
         reviewTriggered: review.triggered,
+        reviewScheduled: review.scheduled === true,
         reviewDeduplicated: review.deduplicated === true,
         reviewStatus: review.reason,
       });

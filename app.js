@@ -1,7 +1,7 @@
 "use strict";
 
 const API = "https://hsm-pronunciation-api.huangsm666.workers.dev";
-const DATA_URL = "annual-language-data.json?v=20260915-annual-3";
+const DATA_URL = "annual-language-data.json?v=20260915-annual-4";
 const DEVICE_KEY = "hsm-pronunciation-device-v1";
 const LOCAL_PREFIX = "hsm-annual-language-draft:";
 const $ = (selector) => document.querySelector(selector);

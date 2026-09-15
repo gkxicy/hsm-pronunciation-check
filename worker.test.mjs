@@ -27,6 +27,8 @@ test("final submission stores the report before triggering the fixed GitHub revi
   const db = new Map();
   const calls = [];
   const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  Date.now = () => Date.parse("2026-09-15T15:01:00Z");
   globalThis.fetch = async (url, options) => {
     calls.push({ url: String(url), options });
     return new Response(null, { status: 204 });
@@ -58,19 +60,58 @@ test("final submission stores the report before triggering the fixed GitHub revi
     assert.deepEqual(event, { event_type: "language-study-submitted", client_payload: { date: "2026-09-15", reportId: payload.id } });
   } finally {
     globalThis.fetch = originalFetch;
+    Date.now = originalNow;
   }
 });
 
-test("submission still succeeds when the automatic-review secret is absent", async () => {
+test("submission at or before Beijing 23:00 is saved without triggering a review", async () => {
   const db = new Map();
-  const response = await worker.fetch(new Request("https://test/submit", {
-    method: "POST",
-    body: JSON.stringify({ date: "2026-09-15", deviceId: "test-device-123456789", vocabularyProgress: [{ word: "英语：schedule", done: true }] }),
-  }), { PRONUNCIATION_REPORTS: { put: async (key, value) => db.set(key, value) } });
-  const payload = await response.json();
-  assert.equal(response.status, 200);
-  assert.equal(payload.reviewTriggered, false);
-  assert.match(payload.reviewStatus, /23:00/);
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  Date.now = () => Date.parse("2026-09-15T15:00:00Z");
+  globalThis.fetch = async (...args) => { calls.push(args); return new Response(null, { status: 204 }); };
+  try {
+    const response = await worker.fetch(new Request("https://test/submit", {
+      method: "POST",
+      body: JSON.stringify({ date: "2026-09-15", deviceId: "test-device-123456789", vocabularyProgress: [{ word: "日语：あい", done: true }] }),
+    }), {
+      GITHUB_DISPATCH_TOKEN: "test-secret",
+      PRONUNCIATION_REPORTS: {
+        get: async () => null,
+        put: async (key, value) => db.set(key, value),
+      },
+    });
+    const payload = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(payload.reviewTriggered, false);
+    assert.equal(payload.reviewScheduled, true);
+    assert.match(payload.message, /今晚 23:00/);
+    assert.equal(calls.length, 0);
+    assert.equal([...db.keys()].some((key) => key.startsWith("report:2026-09-15:")), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+  }
+});
+
+test("late submission still succeeds when the automatic-review secret is absent", async () => {
+  const db = new Map();
+  const originalNow = Date.now;
+  Date.now = () => Date.parse("2026-09-15T15:01:00Z");
+  try {
+    const response = await worker.fetch(new Request("https://test/submit", {
+      method: "POST",
+      body: JSON.stringify({ date: "2026-09-15", deviceId: "test-device-123456789", vocabularyProgress: [{ word: "英语：schedule", done: true }] }),
+    }), { PRONUNCIATION_REPORTS: { put: async (key, value) => db.set(key, value) } });
+    const payload = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(payload.reviewTriggered, false);
+    assert.equal(payload.reviewScheduled, false);
+    assert.match(payload.reviewStatus, /23:00 后/);
+  } finally {
+    Date.now = originalNow;
+  }
 });
 
 test("Kölner Phonetik matches the published reference example", () => {
