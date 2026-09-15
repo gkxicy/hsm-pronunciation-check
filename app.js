@@ -1,7 +1,7 @@
 "use strict";
 
 const API = "https://hsm-pronunciation-api.huangsm666.workers.dev";
-const DATA_URL = "annual-language-data.json?v=20260915-annual-1";
+const DATA_URL = "annual-language-data.json?v=20260915-annual-2";
 const DEVICE_KEY = "hsm-pronunciation-device-v1";
 const LOCAL_PREFIX = "hsm-annual-language-draft:";
 const $ = (selector) => document.querySelector(selector);
@@ -140,9 +140,11 @@ async function loadPlan() {
   try {
     const response = await fetch(`${API}/plan?date=${state.viewedDate}`, { cache: "no-store" });
     const data = await response.json();
-    if (response.ok && data.ok && data.plan) state.plan = data.plan;
+    if (response.ok && data.ok && data.plan
+      && state.byDate.ielts.has(data.plan.sourceDate)
+      && state.byDate.japanese.has(data.plan.sourceDate)) state.plan = data.plan;
   } catch { /* Annual source remains usable offline. */ }
-  state.sourceDate = state.byDate.ielts.has(state.plan?.sourceDate) ? state.plan.sourceDate : state.viewedDate;
+  state.sourceDate = state.plan?.sourceDate || state.viewedDate;
 }
 function section(title, content, links = []) {
   const wrap = el("section", { class: "section" }, el("h3", {}, title));
