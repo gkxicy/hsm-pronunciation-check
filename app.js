@@ -20,7 +20,10 @@ const state = {
   chunks: [],
   recordingStarted: 0,
   recordingIndex: -1,
+  recordingTarget: "",
+  recordingStopping: false,
   audioUrl: "",
+  audioTarget: "",
   quiz: null,
 };
 
@@ -219,14 +222,35 @@ function renderRecording(course) {
   state.draft.recordingSets["ja-JP"] ||= { sentences: [], results: [], recordingEvidence: [] };
   state.draft.recordingSets["ja-JP"].sentences = lines;
   const sectionEl = el("section", { class: "section" }, el("h3", {}, "日语跟读录音与回放"), el("p", { class: "prose" }, "先听参考音，再任选一项录音。你读完后手动停止，页面会立即提供自己的录音回放；识别服务失败也会记作已朗读。"));
+  const statusText = state.recordingStopping
+    ? "正在结束录音并生成回放…"
+    : state.media
+      ? `正在录音：${state.recordingTarget}。读完后请点击当前句子的红色结束按钮。`
+      : state.audioUrl
+        ? "录音已完成，回放就在刚才录制的句子下面。"
+        : "请选择任意一句，点击“开始录音”。";
+  sectionEl.append(el("div", { id: "recordStatus", class: `record-status ${state.media || state.recordingStopping ? "active" : ""}` }, statusText));
   const list = el("div", { class: "record-list" });
   lines.forEach((line, index) => {
     const result = state.draft.results.find((item) => item.language === "ja-JP" && item.target === line);
-    list.append(el("div", { class: `record-line ${state.recordingIndex === index ? "current" : ""}` }, el("b", {}, `${index + 1}. ${line}`), el("div", {}, result ? `识别：${result.transcript || "评分暂不可用"}${result.score == null ? "" : `｜${result.score}%`}` : "尚未录音"),
-      el("div", { class: "buttons" }, el("button", { type: "button", class: "secondary", onclick: () => speak(line, "ja-JP") }, "听参考音"), el("button", { type: "button", onclick: () => beginRecording(index, line) }, "开始录音"))));
+    const isCurrentRecording = Boolean(state.media) && state.recordingIndex === index;
+    const isCurrentStopping = state.recordingStopping && state.recordingIndex === index;
+    const recordButton = el("button", {
+      type: "button",
+      class: isCurrentRecording || isCurrentStopping ? "record-stop" : "",
+      onclick: isCurrentRecording ? stopRecording : () => beginRecording(index, line),
+    }, isCurrentStopping ? "正在生成回放…" : isCurrentRecording ? "■ 结束录音并生成回放" : "开始录音");
+    recordButton.disabled = isCurrentStopping || (Boolean(state.media) && !isCurrentRecording);
+    const listenButton = el("button", { type: "button", class: "secondary", onclick: () => speak(line, "ja-JP") }, "听参考音");
+    listenButton.disabled = Boolean(state.media) || state.recordingStopping;
+    const row = el("div", { class: `record-line ${state.recordingIndex === index ? "current" : ""} ${isCurrentRecording || isCurrentStopping ? "recording" : ""}` },
+      el("b", {}, `${index + 1}. ${line}`),
+      el("div", {}, result ? `识别：${result.transcript || "评分暂不可用"}${result.score == null ? "" : `｜${result.score}%`}` : "尚未录音"),
+      el("div", { class: "buttons" }, listenButton, recordButton));
+    if (state.audioUrl && state.audioTarget === line) row.append(el("div", { class: "record-playback" }, el("strong", {}, "你的录音回放"), el("audio", { controls: "", src: state.audioUrl })));
+    list.append(row);
   });
-  sectionEl.append(list, el("button", { id: "stopRecording", type: "button", class: "secondary", disabled: !state.media, onclick: stopRecording }, state.media ? "停止并生成回放" : "录音尚未开始"), el("div", { id: "recordStatus", class: "save-state" }));
-  if (state.audioUrl) sectionEl.append(el("audio", { controls: "", src: state.audioUrl }));
+  sectionEl.append(list);
   return sectionEl;
 }
 function renderJapanese(course) {
@@ -267,7 +291,8 @@ function render() {
   loadFeedback();
 }
 async function changeDate(date) {
-  state.viewedDate = date; state.sourceDate = date; state.audioUrl = "";
+  if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
+  state.viewedDate = date; state.sourceDate = date; state.audioUrl = ""; state.audioTarget = ""; state.recordingIndex = -1;
   $("#loading").classList.remove("hidden"); $("#courses").classList.add("hidden"); $("#submitArea").classList.add("hidden");
   await Promise.all([loadPlan(), loadDraft()]); render();
 }
@@ -310,19 +335,27 @@ function speak(text, language) {
 }
 async function beginRecording(index, target) {
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { alert("当前浏览器不支持网页录音，请使用最新版 Chrome/Edge。 "); return; }
-  if (state.media) await stopRecording();
+  if (state.media || state.recordingStopping) return;
   try {
-    state.stream = await navigator.mediaDevices.getUserMedia({ audio: true }); state.chunks = []; state.recordingIndex = index; state.recordingStarted = Date.now();
+    window.speechSynthesis?.cancel(); document.querySelectorAll("audio").forEach((audio) => audio.pause());
+    state.stream = await navigator.mediaDevices.getUserMedia({ audio: true }); state.chunks = []; state.recordingIndex = index; state.recordingTarget = target; state.recordingStarted = Date.now(); state.recordingStopping = false;
     state.media = new MediaRecorder(state.stream); state.media.ondataavailable = (event) => { if (event.data.size) state.chunks.push(event.data); }; state.media.onstop = () => finishRecording(target);
-    state.media.start(); renderJapanese(state.byDate.japanese.get(state.sourceDate)); const status = $("#recordStatus"); if (status) status.textContent = `正在录第 ${index + 1} 项：${target}。读完后请手动点“停止并生成回放”。`;
-  } catch (error) { alert(`无法开始录音：${error.message}`); }
+    state.media.start(); renderJapanese(state.byDate.japanese.get(state.sourceDate));
+  } catch (error) {
+    state.stream?.getTracks().forEach((track) => track.stop()); state.stream = null; state.media = null; state.recordingStopping = false; state.recordingTarget = "";
+    alert(`无法开始录音：${error.message}`);
+  }
 }
-async function stopRecording() {
-  if (!state.media) return;
-  const media = state.media; state.media = null; if (media.state !== "inactive") media.stop(); state.stream?.getTracks().forEach((track) => track.stop()); state.stream = null;
+function stopRecording() {
+  if (!state.media || state.recordingStopping) return;
+  const media = state.media;
+  if (media.state === "inactive") return;
+  state.recordingStopping = true; media.stop(); state.stream?.getTracks().forEach((track) => track.stop()); state.stream = null;
+  renderJapanese(state.byDate.japanese.get(state.sourceDate));
 }
 async function finishRecording(target) {
-  const blob = new Blob(state.chunks, { type: state.chunks[0]?.type || "audio/webm" }); if (state.audioUrl) URL.revokeObjectURL(state.audioUrl); state.audioUrl = URL.createObjectURL(blob);
+  state.media = null; state.recordingStopping = false; state.recordingTarget = "";
+  const blob = new Blob(state.chunks, { type: state.chunks[0]?.type || "audio/webm" }); if (state.audioUrl) URL.revokeObjectURL(state.audioUrl); state.audioUrl = URL.createObjectURL(blob); state.audioTarget = target;
   const seconds = Math.max(1, Math.round((Date.now() - state.recordingStarted) / 1000));
   const evidence = { index: state.recordingIndex, target, durationSeconds: seconds, assessmentStatus: "pending", transcript: "", score: null };
   state.draft.recordingEvidence = state.draft.recordingEvidence.filter((x) => !(x.language === "ja-JP" && x.target === target)); state.draft.recordingEvidence.push({ ...evidence, language: "ja-JP" });
