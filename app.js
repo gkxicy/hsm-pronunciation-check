@@ -20,10 +20,13 @@ const state = {
   chunks: [],
   recordingStarted: 0,
   recordingIndex: -1,
+  recordingKey: "",
+  recordingContext: null,
   recordingTarget: "",
   recordingStopping: false,
   audioUrl: "",
   audioTarget: "",
+  audioKey: "",
   quiz: null,
 };
 
@@ -232,22 +235,30 @@ function renderRecording(course) {
   sectionEl.append(el("div", { id: "recordStatus", class: `record-status ${state.media || state.recordingStopping ? "active" : ""}` }, statusText));
   const list = el("div", { class: "record-list" });
   lines.forEach((line, index) => {
+    const key = `daily:${index}`;
     const result = state.draft.results.find((item) => item.language === "ja-JP" && item.target === line);
-    const isCurrentRecording = Boolean(state.media) && state.recordingIndex === index;
-    const isCurrentStopping = state.recordingStopping && state.recordingIndex === index;
+    const isCurrentRecording = Boolean(state.media) && state.recordingKey === key;
+    const isCurrentStopping = state.recordingStopping && state.recordingKey === key;
     const recordButton = el("button", {
       type: "button",
       class: isCurrentRecording || isCurrentStopping ? "record-stop" : "",
-      onclick: isCurrentRecording ? stopRecording : () => beginRecording(index, line),
+      onclick: isCurrentRecording ? stopRecording : () => beginRecording(index, line, { key, source: "daily" }),
     }, isCurrentStopping ? "正在生成回放…" : isCurrentRecording ? "■ 结束录音并生成回放" : "开始录音");
     recordButton.disabled = isCurrentStopping || (Boolean(state.media) && !isCurrentRecording);
     const listenButton = el("button", { type: "button", class: "secondary", onclick: () => speak(line, "ja-JP") }, "听参考音");
     listenButton.disabled = Boolean(state.media) || state.recordingStopping;
-    const row = el("div", { class: `record-line ${state.recordingIndex === index ? "current" : ""} ${isCurrentRecording || isCurrentStopping ? "recording" : ""}` },
+    const resultText = result
+      ? result.retryRequired
+        ? `本次未评分：${result.retryReason || "有效语音太少或转写异常"}。异常文字已忽略，请重新录音。`
+        : result.assessmentInconclusive
+        ? `识别为：${result.transcript || "未取得文字"}｜字面不同，无法可靠区分同音，不判错`
+        : `识别：${result.transcript || "评分暂不可用"}${result.score == null ? "" : `｜${result.score}%`}${result.homophoneAccepted ? "｜同音异写已通过" : ""}`
+      : "尚未录音";
+    const row = el("div", { class: `record-line ${state.recordingKey === key ? "current" : ""} ${isCurrentRecording || isCurrentStopping ? "recording" : ""}` },
       el("b", {}, `${index + 1}. ${line}`),
-      el("div", {}, result ? `识别：${result.transcript || "评分暂不可用"}${result.score == null ? "" : `｜${result.score}%`}` : "尚未录音"),
+      el("div", {}, resultText),
       el("div", { class: "buttons" }, listenButton, recordButton));
-    if (state.audioUrl && state.audioTarget === line) row.append(el("div", { class: "record-playback" }, el("strong", {}, "你的录音回放"), el("audio", { controls: "", src: state.audioUrl })));
+    if (state.audioUrl && state.audioKey === key) row.append(el("div", { class: "record-playback" }, el("strong", {}, "你的录音回放"), el("audio", { controls: "", src: state.audioUrl })));
     list.append(row);
   });
   sectionEl.append(list);
@@ -265,13 +276,58 @@ function renderJapanese(course) {
   const listening = section("听力", course.listening, [externalLink("打开音频", course.audioUrl), externalLink("打开听力题册", course.listeningBookUrl)]); listening.append(doneLine(`japanese:${course.date}:listening`, course.listening)); root.append(listening);
   root.append(renderRecording(course));
 }
+function carryoverRecordingTarget(item) {
+  if (item?.kind === "pronunciation" && item?.target) return String(item.target).trim();
+  const text = `${item?.title || ""}\n${item?.feedback || ""}`;
+  if (!/(?:日语|发音|朗读|重读|录音|读错)/.test(text)) return "";
+  const quoted = [...text.matchAll(/[「『“\"`]([^」』”\"`\n]{1,300})[」』”\"`]/g)]
+    .map((match) => match[1].trim())
+    .find((value) => /[ぁ-んァ-ヶ一-龯]/.test(value));
+  if (quoted) return quoted;
+  const labelled = text.match(/(?:目标句|原句|重读(?:这一句|该句|句子)?|日语发音)[：:\s]+([^\n；。]{1,300})/);
+  return labelled?.[1]?.trim() || "";
+}
+function renderCarryoverRecording(item, index, target) {
+  const language = item.language === "en-US" ? "en-US" : "ja-JP";
+  const key = `carryover:${index}`;
+  const result = state.draft.results.find((entry) => entry.language === language && entry.target === target);
+  const isCurrentRecording = Boolean(state.media) && state.recordingKey === key;
+  const isCurrentStopping = state.recordingStopping && state.recordingKey === key;
+  const listenButton = el("button", { type: "button", class: "secondary", onclick: () => speak(target, language) }, "听参考音");
+  listenButton.disabled = Boolean(state.media) || state.recordingStopping;
+  const recordButton = el("button", {
+    type: "button",
+    class: isCurrentRecording || isCurrentStopping ? "record-stop" : "",
+    onclick: isCurrentRecording ? stopRecording : () => beginRecording(index, target, { key, source: "carryover", language }),
+  }, isCurrentStopping ? "正在生成回放…" : isCurrentRecording ? "■ 结束重读并生成回放" : "开始重读录音");
+  recordButton.disabled = isCurrentStopping || (Boolean(state.media) && !isCurrentRecording);
+  const status = result
+    ? result.retryRequired
+      ? `本次未评分：${result.retryReason || "有效语音太少或转写异常"}。异常文字已忽略，请重新录音。`
+      : result.assessmentInconclusive
+      ? `已重读；识别为「${result.transcript || "未取得文字"}」，因可能是同音异写，不判错。`
+      : `已重读；识别为「${result.transcript || "评分暂不可用"}」${result.score == null ? "" : `，${result.score}%`}${result.passed ? "，已通过" : "，仍需再读"}。`
+    : "尚未重读";
+  const row = el("div", { class: `record-line ${state.recordingKey === key ? "current" : ""} ${isCurrentRecording || isCurrentStopping ? "recording" : ""}` },
+    el("b", {}, target),
+    el("div", {}, status),
+    el("div", { class: "buttons" }, listenButton, recordButton));
+  if (state.audioUrl && state.audioKey === key) row.append(el("div", { class: "record-playback" }, el("strong", {}, "你的本次重读回放"), el("audio", { controls: "", src: state.audioUrl })));
+  return row;
+}
 function renderCarryover() {
   const items = Array.isArray(state.plan?.carryover) ? state.plan.carryover : [];
   const root = $("#carryover"), list = $("#carryList"); list.replaceChildren();
   root.classList.toggle("hidden", !items.length);
   items.forEach((item, index) => {
     const card = el("div", { class: "carry-card" }, el("h3", {}, item.title), el("p", { class: "prose" }, item.feedback));
-    card.append(responseField(`carry:${state.viewedDate}:${index}`, "本次补做答案 / 结果", item.title));
+    const target = carryoverRecordingTarget(item);
+    if (target) {
+      card.append(el("p", { class: "prose" }, "这是上一天未通过的读音。先听参考音，再开始录音；读完后由你手动结束，可立即回放并重新评分。"));
+      card.append(renderCarryoverRecording(item, index, target));
+    } else {
+      card.append(responseField(`carry:${state.viewedDate}:${index}`, "本次补做答案 / 结果", item.title));
+    }
     list.append(card);
   });
 }
@@ -292,7 +348,7 @@ function render() {
 }
 async function changeDate(date) {
   if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
-  state.viewedDate = date; state.sourceDate = date; state.audioUrl = ""; state.audioTarget = ""; state.recordingIndex = -1;
+  state.viewedDate = date; state.sourceDate = date; state.audioUrl = ""; state.audioTarget = ""; state.audioKey = ""; state.recordingIndex = -1; state.recordingKey = ""; state.recordingContext = null;
   $("#loading").classList.remove("hidden"); $("#courses").classList.add("hidden"); $("#submitArea").classList.add("hidden");
   await Promise.all([loadPlan(), loadDraft()]); render();
 }
@@ -333,16 +389,22 @@ function speak(text, language) {
   const voices = speechSynthesis.getVoices(); const exact = voices.find((voice) => voice.lang.toLowerCase() === language.toLowerCase()) || voices.find((voice) => voice.lang.toLowerCase().startsWith(language.slice(0, 2).toLowerCase())); if (exact) utterance.voice = exact;
   speechSynthesis.speak(utterance);
 }
-async function beginRecording(index, target) {
+function rerenderRecordingSurfaces() {
+  renderCarryover();
+  const course = state.byDate.japanese.get(state.sourceDate);
+  if (course && !$("#courses").classList.contains("hidden")) renderJapanese(course);
+}
+async function beginRecording(index, target, options = {}) {
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { alert("当前浏览器不支持网页录音，请使用最新版 Chrome/Edge。 "); return; }
   if (state.media || state.recordingStopping) return;
   try {
     window.speechSynthesis?.cancel(); document.querySelectorAll("audio").forEach((audio) => audio.pause());
-    state.stream = await navigator.mediaDevices.getUserMedia({ audio: true }); state.chunks = []; state.recordingIndex = index; state.recordingTarget = target; state.recordingStarted = Date.now(); state.recordingStopping = false;
-    state.media = new MediaRecorder(state.stream); state.media.ondataavailable = (event) => { if (event.data.size) state.chunks.push(event.data); }; state.media.onstop = () => finishRecording(target);
-    state.media.start(); renderJapanese(state.byDate.japanese.get(state.sourceDate));
+    const context = { index, target, key: options.key || `daily:${index}`, source: options.source || "daily", language: options.language || "ja-JP" };
+    state.stream = await navigator.mediaDevices.getUserMedia({ audio: true }); state.chunks = []; state.recordingIndex = index; state.recordingKey = context.key; state.recordingContext = context; state.recordingTarget = target; state.recordingStarted = Date.now(); state.recordingStopping = false;
+    state.media = new MediaRecorder(state.stream); state.media.ondataavailable = (event) => { if (event.data.size) state.chunks.push(event.data); }; state.media.onstop = () => finishRecording(context);
+    state.media.start(); rerenderRecordingSurfaces();
   } catch (error) {
-    state.stream?.getTracks().forEach((track) => track.stop()); state.stream = null; state.media = null; state.recordingStopping = false; state.recordingTarget = "";
+    state.stream?.getTracks().forEach((track) => track.stop()); state.stream = null; state.media = null; state.recordingStopping = false; state.recordingTarget = ""; state.recordingKey = ""; state.recordingContext = null;
     alert(`无法开始录音：${error.message}`);
   }
 }
@@ -351,27 +413,41 @@ function stopRecording() {
   const media = state.media;
   if (media.state === "inactive") return;
   state.recordingStopping = true; media.stop(); state.stream?.getTracks().forEach((track) => track.stop()); state.stream = null;
-  renderJapanese(state.byDate.japanese.get(state.sourceDate));
+  rerenderRecordingSurfaces();
 }
-async function finishRecording(target) {
+async function finishRecording(context) {
+  const { index, target, key, source, language } = context;
   state.media = null; state.recordingStopping = false; state.recordingTarget = "";
-  const blob = new Blob(state.chunks, { type: state.chunks[0]?.type || "audio/webm" }); if (state.audioUrl) URL.revokeObjectURL(state.audioUrl); state.audioUrl = URL.createObjectURL(blob); state.audioTarget = target;
-  const seconds = Math.max(1, Math.round((Date.now() - state.recordingStarted) / 1000));
-  const evidence = { index: state.recordingIndex, target, durationSeconds: seconds, assessmentStatus: "pending", transcript: "", score: null };
-  state.draft.recordingEvidence = state.draft.recordingEvidence.filter((x) => !(x.language === "ja-JP" && x.target === target)); state.draft.recordingEvidence.push({ ...evidence, language: "ja-JP" });
-  const set = state.draft.recordingSets["ja-JP"]; set.recordingEvidence = set.recordingEvidence.filter((x) => x.target !== target); set.recordingEvidence.push(evidence); markChanged();
-  renderJapanese(state.byDate.japanese.get(state.sourceDate));
+  const blob = new Blob(state.chunks, { type: state.chunks[0]?.type || "audio/webm" }); if (state.audioUrl) URL.revokeObjectURL(state.audioUrl); state.audioUrl = URL.createObjectURL(blob); state.audioTarget = target; state.audioKey = key;
+  const durationMs = Math.max(1, Date.now() - state.recordingStarted);
+  const seconds = Math.max(1, Math.round(durationMs / 1000));
+  const evidence = { index, target, durationSeconds: seconds, assessmentStatus: "pending", transcript: "", score: null };
+  state.draft.recordingEvidence = state.draft.recordingEvidence.filter((x) => !(x.language === language && x.target === target)); state.draft.recordingEvidence.push({ ...evidence, language });
+  state.draft.recordingSets[language] ||= { sentences: [], results: [], recordingEvidence: [] };
+  const set = state.draft.recordingSets[language]; set.recordingEvidence = set.recordingEvidence.filter((x) => x.target !== target); set.recordingEvidence.push(evidence); markChanged();
+  rerenderRecordingSurfaces();
   const status = $("#recordStatus"); if (status) status.textContent = "录音已完成，可以立即回放；正在请求日语识别评分…";
   try {
-    const query = new URLSearchParams({ target, language: "ja-JP" });
+    const query = new URLSearchParams({ target, language, durationMs: String(durationMs) });
     const response = await fetch(`${API}/assess?${query}`, { method: "POST", headers: { "content-type": blob.type || "audio/webm" }, body: blob }); const data = await response.json(); if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
-    const result = { target, transcript: data.transcript || "", language: "ja-JP", assessment: "cloudflare-whisper-v4-japanese", score: data.score, textScore: data.textScore, phoneticScore: null, homophoneAccepted: false, passed: data.score >= 70 };
-    state.draft.results = state.draft.results.filter((x) => !(x.language === "ja-JP" && x.target === target)); state.draft.results.push(result); set.results = set.results.filter((x) => x.target !== target); set.results.push(result);
-    evidence.assessmentStatus = "completed"; evidence.transcript = result.transcript; evidence.score = result.score;
-  } catch (error) { evidence.assessmentStatus = "unavailable"; evidence.transcript = ""; evidence.score = null; }
-  const topEvidence = state.draft.recordingEvidence.find((item) => item.language === "ja-JP" && item.target === target);
-  if (topEvidence) Object.assign(topEvidence, evidence, { language: "ja-JP" });
-  markChanged(); renderJapanese(state.byDate.japanese.get(state.sourceDate));
+    const result = { target, transcript: data.transcript || "", language, assessment: language === "ja-JP" ? "cloudflare-whisper-v4-japanese" : "cloudflare-whisper-v2-unbiased", score: data.score !== null && data.score !== undefined && Number.isFinite(Number(data.score)) ? Number(data.score) : null, textScore: data.textScore, phoneticScore: data.phoneticScore, homophoneAccepted: data.homophoneAccepted === true, assessmentInconclusive: data.assessmentInconclusive === true, retryRequired: data.retryRequired === true, retryReason: data.retryReason || "", readingTarget: data.readingTarget || "", readingTranscript: data.readingTranscript || "", passed: data.passed === true };
+    state.draft.results = state.draft.results.filter((x) => !(x.language === language && x.target === target)); state.draft.results.push(result); set.results = set.results.filter((x) => x.target !== target); set.results.push(result);
+    evidence.assessmentStatus = result.retryRequired ? "unavailable" : "completed"; evidence.transcript = result.transcript; evidence.score = result.score;
+    if (source === "carryover") {
+      const record = exercise(`carry:${state.viewedDate}:${index}`, target);
+      record.response = result.retryRequired ? `本次录音异常，需重新录音：${result.retryReason}` : result.assessmentInconclusive ? "已重新录音；转写字面不同，系统未据此判错" : result.passed ? `已重新录音并通过（${result.score}%）` : `已重新录音，仍需重读（${result.score}%）`;
+    }
+  } catch (error) {
+    evidence.assessmentStatus = "unavailable"; evidence.transcript = ""; evidence.score = null;
+    if (source === "carryover") {
+      const record = exercise(`carry:${state.viewedDate}:${index}`, target);
+      record.response = "已重新录音并可回放；自动评分暂不可用";
+    }
+  }
+  const topEvidence = state.draft.recordingEvidence.find((item) => item.language === language && item.target === target);
+  if (topEvidence) Object.assign(topEvidence, evidence, { language });
+  state.recordingKey = ""; state.recordingContext = null; state.recordingIndex = -1;
+  markChanged(); rerenderRecordingSurfaces();
 }
 function hasWork() {
   return state.draft.vocabularyProgress.some((x) => x.done) || state.draft.languageExercises.some((x) => x.response.trim()) || state.draft.englishTasks.some((x) => x.done || x.userAnswer.trim() || x.score.trim()) || state.draft.recordingEvidence.length > 0;

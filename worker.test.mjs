@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { germanPhoneticCode, scoreSpeech } from "./worker.js";
+import { germanPhoneticCode, scoreSpeech, scoreJapaneseReadings, japaneseTranscriptionAnomaly } from "./worker.js";
 import worker from "./worker.js";
 
 test('feedback access is device-scoped and writers require a configured secret',async()=>{
@@ -132,6 +132,103 @@ test('Japanese recording data survives cloud saving and kana variants are normal
  assert.equal(res.status,200);assert.equal(saved.recordingSets['ja-JP'].sentences[0],'アイウエオ');assert.equal(saved.recordingSets['ja-JP'].results[0].language,'ja-JP');
  assert.equal(scoreSpeech('アイウエオ','あいうえお','ja-JP').score,100);
  assert.ok(scoreSpeech('あいうえお','かきくけこ','ja-JP').score<75);
+ assert.equal(scoreSpeech('連絡（れんらく）','れんらく','ja-JP').score,100);
+});
+
+test("Japanese homographs and alternative kanji are scored by kana reading", () => {
+  const result = scoreJapaneseReadings("箸（はし）", "橋", "はし", "はし");
+  assert.equal(result.score, 100);
+  assert.equal(result.phoneticScore, 100);
+  assert.equal(result.homophoneAccepted, true);
+});
+
+test("Japanese assessment accepts a different ASR spelling when the kana readings match", async () => {
+  let calls = 0;
+  const env = {
+    AI: {
+      run: async (model) => {
+        calls += 1;
+        if (model.includes("whisper")) return { text: "橋" };
+        return { response: '{"target":"はし","transcript":"はし"}' };
+      },
+    },
+  };
+  const response = await worker.fetch(new Request("https://test/assess?target=%E7%AE%B8%EF%BC%88%E3%81%AF%E3%81%97%EF%BC%89&language=ja-JP", {
+    method: "POST",
+    headers: { "content-type": "audio/webm" },
+    body: new Uint8Array([1, 2, 3]),
+  }), env);
+  const data = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(data.passed, true);
+  assert.equal(data.score, 100);
+  assert.equal(data.homophoneAccepted, true);
+  assert.equal(data.readingTarget, "はし");
+  assert.equal(data.readingTranscript, "はし");
+  assert.equal(calls, 2);
+});
+
+test("a kanji-shaped ASR mismatch is not marked wrong when reading conversion is unavailable", async () => {
+  const env = {
+    AI: {
+      run: async (model) => {
+        if (model.includes("whisper")) return { text: "愛" };
+        throw new Error("reading model unavailable");
+      },
+    },
+  };
+  const response = await worker.fetch(new Request("https://test/assess?target=%E3%81%82%E3%81%84&language=ja-JP", {
+    method: "POST",
+    body: new Uint8Array([1]),
+  }), env);
+  const data = await response.json();
+  assert.equal(data.passed, true);
+  assert.equal(data.score, null);
+  assert.equal(data.assessmentInconclusive, true);
+});
+
+test("short-audio Japanese hallucinations are ignored instead of being scored", async () => {
+  let calls = 0;
+  const env = {
+    AI: {
+      run: async () => {
+        calls += 1;
+        return { text: "ご視聴ありがとうございました" };
+      },
+    },
+  };
+  const response = await worker.fetch(new Request("https://test/assess?target=%E3%81%82&language=ja-JP&durationMs=900", {
+    method: "POST",
+    body: new Uint8Array([1, 2]),
+  }), env);
+  const data = await response.json();
+  assert.equal(data.retryRequired, true);
+  assert.equal(data.passed, false);
+  assert.equal(data.score, null);
+  assert.equal(data.transcript, "");
+  assert.match(data.retryReason, /识别文字远长|异常转写/);
+  assert.equal(calls, 1, "an obvious hallucination must be stopped before kana conversion");
+});
+
+test("a correctly recognized single kana is not rejected as too short", () => {
+  assert.equal(japaneseTranscriptionAnomaly("あ", "あ", 350), "");
+  assert.match(japaneseTranscriptionAnomaly("あ", "こんにちは", 900), /识别文字远长/);
+});
+
+test("published plans preserve structured pronunciation carryover fields", async () => {
+  let saved;
+  const response = await worker.fetch(new Request("https://test/plan", {
+    method: "POST",
+    headers: { authorization: "Bearer secret" },
+    body: JSON.stringify({
+      date: "2026-09-16", sourceDate: "2026-09-16", action: "advance", reason: "补读不暂停新课",
+      carryover: [{ title: "日语发音重读", feedback: "只重读错句", kind: "pronunciation", language: "ja-JP", target: "はし", status: "failed", estimatedMinutes: 3 }],
+    }),
+  }), { REVIEW_TOKEN: "secret", PRONUNCIATION_REPORTS: { put: async (_key, value) => { saved = JSON.parse(value); } } });
+  assert.equal(response.status, 200);
+  assert.deepEqual(saved.carryover[0], {
+    title: "日语发音重读", feedback: "只重读错句", kind: "pronunciation", language: "ja-JP", target: "はし", status: "failed", estimatedMinutes: 3,
+  });
 });
 
 test("German homophones with different spelling are accepted", () => {

@@ -38,6 +38,14 @@ function normalizeJapanese(value) {
     .replace(/[\s.,!?;:'\"，。！？；：「」『』（）()\[\]]/g, "")
     .replace(/[ァ-ヶ]/g, (letter) => String.fromCharCode(letter.charCodeAt(0) - 0x60));
 }
+function containsHan(value) {
+  return /\p{Script=Han}/u.test(cleanText(value, 600));
+}
+function japaneseReadingHint(value) {
+  const text = cleanText(value, 600).normalize("NFKC");
+  const readings = [...text.matchAll(/[（(]([ぁ-んァ-ヶー]+)[）)]/g)].map((match) => match[1]);
+  return readings.length === 1 ? normalizeJapanese(readings[0]) : normalizeJapanese(text);
+}
 function tokenSimilarity(expectedTokens, heardTokens, substitutionCost) {
   const a = expectedTokens;
   const b = heardTokens;
@@ -86,7 +94,7 @@ function germanPhoneticCode(value) {
 }
 function scoreSpeech(expected, heard, language) {
   if (language.startsWith("ja")) {
-    const a = [...normalizeJapanese(expected)], b = [...normalizeJapanese(heard)];
+    const a = [...japaneseReadingHint(expected)], b = [...japaneseReadingHint(heard)];
     const textScore = tokenSimilarity(a, b, (left, right) => left === right ? 0 : 1);
     return { score: textScore, textScore, phoneticScore: null, homophoneAccepted: false };
   }
@@ -104,6 +112,65 @@ function scoreSpeech(expected, heard, language) {
     homophoneAccepted: phoneticScore > textScore,
   };
 }
+function scoreJapaneseReadings(expected, heard, expectedReading, heardReading) {
+  const textScore = scoreSpeech(expected, heard, "ja-JP").textScore;
+  const readingScore = tokenSimilarity(
+    [...normalizeJapanese(expectedReading)],
+    [...normalizeJapanese(heardReading)],
+    (left, right) => left === right ? 0 : 1,
+  );
+  return {
+    score: Math.max(textScore, readingScore),
+    textScore,
+    phoneticScore: readingScore,
+    homophoneAccepted: readingScore > textScore,
+    readingTarget: normalizeJapanese(expectedReading),
+    readingTranscript: normalizeJapanese(heardReading),
+  };
+}
+function japaneseTranscriptionAnomaly(target, transcript, durationMs = 0) {
+  const expected = japaneseReadingHint(target);
+  const heard = normalizeJapanese(transcript);
+  if (!heard) return "没有检测到有效语音";
+  if (heard === expected) return "";
+  if (durationMs > 0 && durationMs < 450) return "录音时间太短";
+  const expectedLength = [...expected].length;
+  const heardLength = [...heard].length;
+  const excessiveLength = Math.max(expectedLength * 2 + 1, expectedLength + 3);
+  if (heardLength > excessiveLength) return "识别文字远长于目标读音";
+  if (durationMs >= 500 && heardLength / (durationMs / 1000) > 12) return "识别字符速度不符合本次录音长度";
+  if (/(?:ご視聴ありがとうございました|チャンネル登録|字幕|お疲れ様でした|最後までご覧)/.test(transcript)) {
+    return "命中短录音常见的异常转写";
+  }
+  return "";
+}
+async function resolveJapaneseReadings(env, target, transcript) {
+  const response = await env.AI.run("@cf/meta/llama-3.1-8b-instruct-fast", {
+    messages: [
+      {
+        role: "system",
+        content: "Convert Japanese text to the pronunciation actually represented by the text. Return hiragana only. Different kanji with the same pronunciation must produce the same hiragana. Do not translate or explain.",
+      },
+      {
+        role: "user",
+        content: `Return exactly one JSON object with keys target and transcript.\ntarget: ${target}\ntranscript: ${transcript}`,
+      },
+    ],
+    max_tokens: 120,
+    temperature: 0,
+  });
+  const raw = cleanText(response?.response, 1000);
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start < 0 || end <= start) throw new Error("日语读音转换没有返回 JSON");
+  const parsed = JSON.parse(raw.slice(start, end + 1));
+  const targetReading = normalizeJapanese(parsed?.target);
+  const transcriptReading = normalizeJapanese(parsed?.transcript);
+  if (!targetReading || !transcriptReading || containsHan(targetReading) || containsHan(transcriptReading)) {
+    throw new Error("日语读音转换结果无效");
+  }
+  return { targetReading, transcriptReading };
+}
 function cleanResults(value) {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 30).map((item) => ({
@@ -112,13 +179,18 @@ function cleanResults(value) {
     language: /^(de-DE|en-US|ja-JP)$/.test(item?.language) ? item.language : "",
     assessment: ["cloudflare-whisper-v2-unbiased", "cloudflare-whisper-v3-phonetic", "cloudflare-whisper-v4-japanese"].includes(item?.assessment)
       ? item.assessment : "",
-    score: Number.isFinite(Number(item?.score))
+    score: item?.score !== null && item?.score !== undefined && Number.isFinite(Number(item.score))
       ? Math.max(0, Math.min(100, Math.round(Number(item.score)))) : null,
-    textScore: Number.isFinite(Number(item?.textScore))
+    textScore: item?.textScore !== null && item?.textScore !== undefined && Number.isFinite(Number(item.textScore))
       ? Math.max(0, Math.min(100, Math.round(Number(item.textScore)))) : null,
-    phoneticScore: Number.isFinite(Number(item?.phoneticScore))
+    phoneticScore: item?.phoneticScore !== null && item?.phoneticScore !== undefined && Number.isFinite(Number(item.phoneticScore))
       ? Math.max(0, Math.min(100, Math.round(Number(item.phoneticScore)))) : null,
     homophoneAccepted: item?.homophoneAccepted === true,
+    assessmentInconclusive: item?.assessmentInconclusive === true,
+    retryRequired: item?.retryRequired === true,
+    retryReason: cleanText(item?.retryReason, 160),
+    readingTarget: cleanText(item?.readingTarget, 500),
+    readingTranscript: cleanText(item?.readingTranscript, 500),
     passed: item?.passed === true,
   }));
 }
@@ -192,7 +264,15 @@ function cleanPlan(value) {
     sourceDate: value.sourceDate,
     action: value.action === "advance" ? "advance" : "repeat",
     reason: cleanText(value.reason, 240),
-    carryover: Array.isArray(value.carryover) ? value.carryover.slice(0,100).filter(item => typeof item?.title === 'string' && typeof item?.feedback === 'string').map(item => ({title:cleanText(item.title,200),feedback:cleanText(item.feedback,4000)})) : [],
+    carryover: Array.isArray(value.carryover) ? value.carryover.slice(0,100).filter(item => typeof item?.title === 'string' && typeof item?.feedback === 'string').map(item => ({
+      title: cleanText(item.title, 200),
+      feedback: cleanText(item.feedback, 4000),
+      kind: item?.kind === "pronunciation" ? "pronunciation" : "written",
+      language: /^(ja-JP|en-US)$/.test(item?.language) ? item.language : "",
+      target: cleanText(item?.target, 300),
+      status: ["unfinished", "failed"].includes(item?.status) ? item.status : "unfinished",
+      estimatedMinutes: Number.isFinite(Number(item?.estimatedMinutes)) ? Math.max(1, Math.min(120, Math.round(Number(item.estimatedMinutes)))) : 5,
+    })) : [],
     weeklyReplan: value.weeklyReplan === true,
     weekStart: validDate(value.weekStart) ? value.weekStart : "",
     weeklyTask: cleanText(value.weeklyTask, 6000),
@@ -288,6 +368,7 @@ export default {
     if (request.method === "POST" && url.pathname === "/assess") {
       const target = cleanText(url.searchParams.get("target"), 300);
       const language = cleanText(url.searchParams.get("language"), 10);
+      const durationMs = Math.max(0, Math.min(600000, Math.round(Number(url.searchParams.get("durationMs") || 0))));
       if (!target || !/^(de-DE|en-US|ja-JP)$/.test(language)) return json({ ok: false, error: "目标句或语言无效" }, 400);
       if (!env.AI) return json({ ok: false, error: "Cloudflare Worker 尚未绑定 Workers AI（变量名必须为 AI）" }, 503);
       const declaredSize = Number(request.headers.get("content-length") || 0);
@@ -303,17 +384,64 @@ export default {
           language: forcedLanguage,
           vad_filter: true,
           condition_on_previous_text: false,
+          no_speech_threshold: 0.45,
+          compression_ratio_threshold: 2.0,
+          log_prob_threshold: -0.8,
+          hallucination_silence_threshold: 0.5,
         });
         const transcript = cleanText(transcription?.text, 500);
-        const assessment = scoreSpeech(target, transcript, language);
+        const retryReason = language.startsWith("ja") ? japaneseTranscriptionAnomaly(target, transcript, durationMs) : "";
+        if (retryReason) {
+          return json({
+            ok: true,
+            transcript: "",
+            score: null,
+            passed: false,
+            textScore: null,
+            phoneticScore: null,
+            homophoneAccepted: false,
+            assessmentInconclusive: true,
+            retryRequired: true,
+            retryReason,
+            language: forcedLanguage,
+            model: "@cf/openai/whisper-large-v3-turbo",
+            scoring: "japanese-hallucination-filter-v1",
+          });
+        }
+        let assessment = scoreSpeech(target, transcript, language);
+        let assessmentInconclusive = false;
+        if (language.startsWith("ja") && assessment.score < 75 && (containsHan(target) || containsHan(transcript))) {
+          try {
+            const readings = await resolveJapaneseReadings(env, target, transcript);
+            assessment = scoreJapaneseReadings(target, transcript, readings.targetReading, readings.transcriptReading);
+          } catch {
+            // A kanji/Chinese-looking ASR result cannot safely be judged from spelling alone.
+            // Keep the recording as completed and do not create a false pronunciation failure.
+            assessment = {
+              ...assessment,
+              score: null,
+              phoneticScore: null,
+              homophoneAccepted: false,
+              readingTarget: japaneseReadingHint(target),
+              readingTranscript: "",
+            };
+            assessmentInconclusive = true;
+          }
+        }
+        const passed = assessmentInconclusive || (assessment.score ?? 0) >= 75;
         return json({
-          ok: true, transcript, score: assessment.score, passed: assessment.score >= 75,
+          ok: true, transcript, score: assessment.score, passed,
           textScore: assessment.textScore, phoneticScore: assessment.phoneticScore,
           homophoneAccepted: assessment.homophoneAccepted,
+          assessmentInconclusive,
+          retryRequired: false,
+          retryReason: "",
+          readingTarget: assessment.readingTarget || "",
+          readingTranscript: assessment.readingTranscript || "",
           language: forcedLanguage, model: "@cf/openai/whisper-large-v3-turbo",
           scoring: language.startsWith("de")
             ? "german-phonetic-or-recognized-text-v3" : language.startsWith("ja")
-              ? "japanese-normalized-character-similarity-v1" : "recognized-content-similarity-v3",
+              ? "japanese-kana-reading-similarity-v2" : "recognized-content-similarity-v3",
         });
       } catch (error) {
         return json({ ok: false, error: "语音识别服务失败：" + cleanText(error?.message, 180) }, 502);
@@ -386,4 +514,4 @@ export default {
   },
 };
 
-export { germanPhoneticCode, scoreSpeech };
+export { germanPhoneticCode, scoreSpeech, scoreJapaneseReadings, japaneseTranscriptionAnomaly };
