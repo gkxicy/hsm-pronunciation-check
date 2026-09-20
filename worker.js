@@ -263,6 +263,7 @@ function cleanPlan(value) {
     date: value.date,
     sourceDate: value.sourceDate,
     action: value.action === "advance" ? "advance" : "repeat",
+    fullDayRepeat: value.fullDayRepeat === true,
     reason: cleanText(value.reason, 240),
     carryover: Array.isArray(value.carryover) ? value.carryover.slice(0,100).filter(item => typeof item?.title === 'string' && typeof item?.feedback === 'string').map(item => ({
       title: cleanText(item.title, 200),
@@ -352,8 +353,16 @@ export default {
     if (request.method === "GET" && url.pathname === "/plan") {
       const date = url.searchParams.get("date");
       if (!validDate(date)) return json({ ok: false, error: "日期格式必须是 YYYY-MM-DD" }, 400);
-      const plan = await env.PRONUNCIATION_REPORTS.get("plan:" + date, "json");
-      return json({ ok: true, plan });
+      let plan = await env.PRONUNCIATION_REPORTS.get("plan:" + date, "json");
+      let inheritedFrom = "";
+      if (!plan && url.searchParams.get("inherit") === "1" && typeof env.PRONUNCIATION_REPORTS.list === "function") {
+        try {
+          const listed = await env.PRONUNCIATION_REPORTS.list({ prefix: "plan:", limit: 1000 });
+          inheritedFrom = (listed.keys || []).map(({ name }) => name.slice(5)).filter((candidate) => validDate(candidate) && candidate < date).sort().at(-1) || "";
+          if (inheritedFrom) plan = await env.PRONUNCIATION_REPORTS.get("plan:" + inheritedFrom, "json");
+        } catch { inheritedFrom = ""; }
+      }
+      return json({ ok: true, plan, inheritedFrom });
     }
     if (request.method === "POST" && url.pathname === "/plan") {
       if (!authorised(request, env)) return json({ ok: false, error: "未授权" }, 401);

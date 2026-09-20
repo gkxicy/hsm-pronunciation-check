@@ -46,3 +46,9 @@ test("the page keeps answers hidden until the learner requests them", () => {
   assert.match(app, /el\("details", \{ class: "answer" \}/);
   assert.doesNotMatch(app, /el\("details", \{[^}]*open:/);
 });
+
+test("a missing daily plan inherits the latest published progress instead of using the calendar date", () => {
+  assert.match(app, /findPreviousPublishedPlan/);
+  assert.match(app, /inherit=1|inherit:\s*"1"/);
+  assert.doesNotMatch(app, /state\.plan\?\.sourceDate \|\| state\.viewedDate/);
+});

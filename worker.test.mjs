@@ -231,6 +231,25 @@ test("published plans preserve structured pronunciation carryover fields", async
   });
 });
 
+test("plan lookup inherits the latest earlier plan when the requested day was not generated", async () => {
+  const db = new Map([
+    ["plan:2026-09-18", JSON.stringify({ date: "2026-09-18", sourceDate: "2026-09-17", action: "advance", reason: "Day 3", carryover: [] })],
+    ["plan:2026-09-19", JSON.stringify({ date: "2026-09-19", sourceDate: "2026-09-17", action: "repeat", reason: "继续 Day 3", carryover: [] })],
+  ]);
+  const env = { PRONUNCIATION_REPORTS: {
+    get: async (key, type) => {
+      const value = db.get(key);
+      return type === "json" && value ? JSON.parse(value) : value;
+    },
+    list: async ({ prefix }) => ({ keys: [...db.keys()].filter((key) => key.startsWith(prefix)).map((name) => ({ name })) }),
+  } };
+  const response = await worker.fetch(new Request("https://test/plan?date=2026-09-20&inherit=1"), env);
+  const data = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(data.plan.sourceDate, "2026-09-17");
+  assert.equal(data.inheritedFrom, "2026-09-19");
+});
+
 test("German homophones with different spelling are accepted", () => {
   for (const [expected, heard] of [["seit", "seid"], ["Meer", "mehr"], ["wieder", "wider"]]) {
     const result = scoreSpeech(expected, heard, "de-DE");

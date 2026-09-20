@@ -12,6 +12,8 @@ const state = {
   viewedDate: "",
   sourceDate: "",
   plan: null,
+  planInheritedFrom: "",
+  planMissing: false,
   draft: null,
   deviceId: "",
   saveTimer: null,
@@ -141,16 +143,53 @@ async function loadDraft() {
   state.draft = normalizeDraft(newest, state.viewedDate);
   $("#saveState").textContent = newest ? "已恢复此前暂存的进度。" : "尚无暂存进度；填写后会自动保存。";
 }
+function addIsoDays(date, days) {
+  const value = new Date(`${date}T00:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+}
+function usablePlan(plan) {
+  return plan && state.byDate.ielts.has(plan.sourceDate) && state.byDate.japanese.has(plan.sourceDate);
+}
+async function requestPublishedPlan(date, inherit = false) {
+  try {
+    const query = new URLSearchParams(inherit ? { date, inherit: "1" } : { date });
+    const response = await fetch(`${API}/plan?${query}`, { cache: "no-store" });
+    const data = await response.json();
+    return response.ok && data.ok ? data : null;
+  } catch { return null; }
+}
+async function findPreviousPublishedPlan(date) {
+  let cursor = addIsoDays(date, -1);
+  while (cursor >= state.catalog.startDate) {
+    const dates = [];
+    for (let index = 0; index < 14 && cursor >= state.catalog.startDate; index += 1) {
+      dates.push(cursor);
+      cursor = addIsoDays(cursor, -1);
+    }
+    const attempts = await Promise.all(dates.map(async (candidate) => ({ candidate, data: await requestPublishedPlan(candidate) })));
+    const found = attempts.find(({ data }) => usablePlan(data?.plan));
+    if (found) return { plan: found.data.plan, inheritedFrom: found.candidate };
+  }
+  return null;
+}
 async function loadPlan() {
   state.plan = null;
-  try {
-    const response = await fetch(`${API}/plan?date=${state.viewedDate}`, { cache: "no-store" });
-    const data = await response.json();
-    if (response.ok && data.ok && data.plan
-      && state.byDate.ielts.has(data.plan.sourceDate)
-      && state.byDate.japanese.has(data.plan.sourceDate)) state.plan = data.plan;
-  } catch { /* Annual source remains usable offline. */ }
-  state.sourceDate = state.plan?.sourceDate || state.viewedDate;
+  state.planInheritedFrom = "";
+  state.planMissing = false;
+  const current = await requestPublishedPlan(state.viewedDate, true);
+  if (usablePlan(current?.plan)) {
+    state.plan = current.plan;
+    state.planInheritedFrom = current.inheritedFrom || (current.plan.date !== state.viewedDate ? current.plan.date : "");
+  } else {
+    const previous = await findPreviousPublishedPlan(state.viewedDate);
+    if (previous) {
+      state.plan = previous.plan;
+      state.planInheritedFrom = previous.inheritedFrom;
+    }
+  }
+  state.planMissing = !state.plan;
+  state.sourceDate = state.plan?.sourceDate || state.catalog.startDate;
 }
 function section(title, content, links = []) {
   const wrap = el("section", { class: "section" }, el("h3", {}, title));
@@ -333,7 +372,7 @@ function renderCarryover() {
 }
 function render() {
   const ielts = state.byDate.ielts.get(state.sourceDate), japanese = state.byDate.japanese.get(state.sourceDate);
-  const repeatOnly = state.plan?.action === "repeat" && (state.plan.carryover?.length || 0) > 0;
+  const repeatOnly = state.plan?.action === "repeat" && !state.plan.fullDayRepeat && (state.plan.carryover?.length || 0) > 0;
   renderCarryover();
   $("#loading").classList.add("hidden"); $("#courses").classList.toggle("hidden", repeatOnly || !ielts || !japanese); $("#submitArea").classList.remove("hidden");
   if (!ielts || !japanese) {
@@ -341,14 +380,17 @@ function render() {
   }
   if (!repeatOnly) { renderIelts(ielts); renderJapanese(japanese); }
   state.draft.lessonTitle = `${state.sourceDate} · 雅思 ${ielts.day} + 日语 ${japanese.day}`;
-  if (repeatOnly) setStatus(`昨晚未通过项目较多：今天只重做列出的未通过项目；已经完成的作业不重做。\n原因：${state.plan.reason || "根据晚间复盘调整"}`, "warn");
+  if (state.planMissing) setStatus(`没有读取到任何已发布的学习进度。为防止按日期跳级，页面已安全停在 ${state.sourceDate}，不会自动进入今天对应的日历课程。`, "warn");
+  else if (state.planInheritedFrom) setStatus(`今天的云端计划尚未生成，已自动沿用 ${state.planInheritedFrom} 的有效进度：${state.sourceDate}。不会按日历日期跳级。`, "warn");
+  else if (state.plan?.fullDayRepeat) setStatus(`前一天没有学习提交：今天完整重学 ${state.sourceDate} 的任务，不进入下一天。`, "warn");
+  else if (repeatOnly) setStatus(`昨晚未通过项目较多：今天只重做列出的未通过项目；已经完成的作业不重做。\n原因：${state.plan.reason || "根据晚间复盘调整"}`, "warn");
   else if (state.plan?.carryover?.length) setStatus(`今天进入 ${state.sourceDate} 的新内容，并追加 ${state.plan.carryover.length} 个少量补练项目。已通过内容不重做。`, "warn");
   else setStatus(`正在学习年度计划 ${state.sourceDate}：雅思 ${ielts.day} + 日语 ${japanese.day}。页面内容来自两份 365 天表格。`);
   loadFeedback();
 }
 async function changeDate(date) {
   if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
-  state.viewedDate = date; state.sourceDate = date; state.audioUrl = ""; state.audioTarget = ""; state.audioKey = ""; state.recordingIndex = -1; state.recordingKey = ""; state.recordingContext = null;
+  state.viewedDate = date; state.sourceDate = state.catalog.startDate; state.audioUrl = ""; state.audioTarget = ""; state.audioKey = ""; state.recordingIndex = -1; state.recordingKey = ""; state.recordingContext = null;
   $("#loading").classList.remove("hidden"); $("#courses").classList.add("hidden"); $("#submitArea").classList.add("hidden");
   await Promise.all([loadPlan(), loadDraft()]); render();
 }
