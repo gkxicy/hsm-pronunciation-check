@@ -1,7 +1,7 @@
 "use strict";
 
 const API = "https://hsm-pronunciation-api.huangsm666.workers.dev";
-const DATA_URL = "annual-language-data.json?v=20260915-annual-4";
+const DATA_URL = "annual-language-data.json?v=20260927-compatible-core-1";
 const DEVICE_KEY = "hsm-pronunciation-device-v1";
 const LOCAL_PREFIX = "hsm-annual-language-draft:";
 const $ = (selector) => document.querySelector(selector);
@@ -30,6 +30,8 @@ const state = {
   audioTarget: "",
   audioKey: "",
   quiz: null,
+  focusRemaining: 45 * 60,
+  focusInterval: null,
 };
 
 function el(tag, attrs = {}, ...children) {
@@ -54,6 +56,10 @@ function validUrl(url) {
 function externalLink(label, url) {
   return validUrl(url) ? el("a", { class: "button-link secondary", href: url, target: "_blank", rel: "noopener noreferrer" }, label) : null;
 }
+function externalLinks(label, values) {
+  const links = (Array.isArray(values) ? values : [values]).filter(validUrl);
+  return links.map((url, index) => externalLink(links.length > 1 ? `${label} ${index + 1}` : label, url));
+}
 function setStatus(text, kind = "") {
   const box = $("#planStatus");
   box.textContent = text;
@@ -73,18 +79,82 @@ function makeDeviceId() {
 function blankDraft(date) {
   return {
     date, deviceId: state.deviceId, lessonTitle: "", language: "英语与日语", sentences: [], results: [],
-    recordingEvidence: [], vocabularyProgress: [], languageExercises: [], sentencePractice: [], englishTasks: [],
-    recordingSets: { "ja-JP": { sentences: [], results: [], recordingEvidence: [] } }, updatedAt: "",
+    recordingEvidence: [], vocabularyProgress: [], languageExercises: [], sentencePractice: [], englishTasks: [], attempts: [],
+    recordingSets: {
+      "ja-JP": { sentences: [], results: [], recordingEvidence: [] },
+      "en-US": { sentences: [], results: [], recordingEvidence: [] },
+    }, updatedAt: "",
   };
 }
 function normalizeDraft(value, date) {
   const base = blankDraft(date);
   if (!value || typeof value !== "object") return base;
-  for (const key of ["results", "recordingEvidence", "vocabularyProgress", "languageExercises", "sentencePractice", "englishTasks"])
+  for (const key of ["results", "recordingEvidence", "vocabularyProgress", "languageExercises", "sentencePractice", "englishTasks", "attempts"])
     base[key] = Array.isArray(value[key]) ? value[key] : [];
   base.recordingSets = value.recordingSets && typeof value.recordingSets === "object" ? value.recordingSets : base.recordingSets;
   base.updatedAt = value.updatedAt || "";
   return base;
+}
+function pronunciationStatus(result) {
+  if (["passed", "failed", "inconclusive", "technical_error", "manual_confirmed"].includes(result?.status)) return result.status;
+  if (result?.manualConfirmed === true) return "manual_confirmed";
+  if (result?.errorType === "technical_error" || result?.result === "technical_error") return "technical_error";
+  if (result?.assessmentInconclusive === true || result?.result === "inconclusive") return "inconclusive";
+  if (result?.passed === true || result?.result === "correct") return "passed";
+  if (result?.passed === false || result?.result === "knowledge_error") return "failed";
+  return "technical_error";
+}
+function centralResult(status) {
+  if (status === "passed") return "correct";
+  if (status === "failed") return "knowledge_error";
+  return status;
+}
+function resultMessage(result) {
+  if (!result) return "尚未录音";
+  const status = pronunciationStatus(result);
+  const transcript = result.transcript ? `识别为「${result.transcript}」。` : "";
+  if (status === "passed") return `${transcript}朗读内容与目标可靠匹配。`;
+  if (status === "failed") return `${transcript}${result.reason || "读音存在明确差异，请重读。"}`;
+  if (status === "inconclusive") return `${transcript}${result.reason || result.retryReason || "当前识别结果无法可靠判断，请重新朗读。"}`;
+  if (status === "technical_error") return `${result.reason || "录音已保留，但识别服务暂时不可用。"} 这不是知识错误。`;
+  if (status === "manual_confirmed") return "你已确认本次读音正确；该结果不会进入错题或补练。";
+  return "本次结果暂不可用。";
+}
+function attemptId(context) {
+  return `${state.sourceDate}:pronunciation:${context.language}:${context.source}:${context.index}`;
+}
+function savePronunciationAttempt(context, result) {
+  const status = pronunciationStatus(result);
+  const attempt = {
+    question_id: attemptId(context),
+    user_answer: result.transcript || "[audio recording]",
+    result: centralResult(status),
+    error_type: centralResult(status),
+    timestamp: new Date().toISOString(),
+    source: context.source,
+    language: context.language,
+    day: Number((state.byDate[context.language === "ja-JP" ? "japanese" : "ielts"].get(state.sourceDate)?.day || "").match(/\d+/)?.[0]) || null,
+  };
+  state.draft.attempts = state.draft.attempts.filter((item) => item.question_id !== attempt.question_id);
+  state.draft.attempts.push(attempt);
+}
+function saveLearningAttempt({ questionId, userAnswer, result = "inconclusive", source = "web" , language = "" }) {
+  const safeResult = ["correct", "knowledge_error", "inconclusive", "technical_error", "manual_confirmed"].includes(result)
+    ? result : "inconclusive";
+  const inferredLanguage = language || (questionId.startsWith("ja-") || questionId.startsWith("japanese:") ? "ja-JP" : "en-US");
+  const course = state.byDate[inferredLanguage === "ja-JP" ? "japanese" : "ielts"].get(state.sourceDate);
+  const attempt = {
+    question_id: questionId,
+    user_answer: String(userAnswer || ""),
+    result: safeResult,
+    error_type: safeResult,
+    timestamp: new Date().toISOString(),
+    source,
+    language: inferredLanguage,
+    day: Number((course?.day || "").match(/\d+/)?.[0]) || null,
+  };
+  state.draft.attempts = state.draft.attempts.filter((item) => item.question_id !== questionId);
+  state.draft.attempts.push(attempt);
 }
 function exercise(id, prompt = "") {
   let record = state.draft.languageExercises.find((item) => item.id === id);
@@ -112,12 +182,96 @@ function vocabularyRecord(prefix, word) {
   return record;
 }
 function localKey() { return `${LOCAL_PREFIX}${state.viewedDate}:${state.deviceId}`; }
+function draftEvidenceCount(draft) {
+  if (!draft) return 0;
+  return (draft.attempts?.length || 0)
+    + (draft.recordingEvidence?.length || 0)
+    + (draft.vocabularyProgress?.filter((item) => item.done).length || 0)
+    + (draft.languageExercises?.filter((item) => item.response?.trim()).length || 0)
+    + (draft.englishTasks?.filter((item) => item.done || item.userAnswer?.trim() || item.score?.trim()).length || 0);
+}
+function localLearningHistory() {
+  const records = [];
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index);
+    if (!key?.startsWith(LOCAL_PREFIX) || !key.endsWith(`:${state.deviceId}`)) continue;
+    try {
+      const draft = JSON.parse(localStorage.getItem(key));
+      const count = draftEvidenceCount(draft);
+      if (count) records.push({ date: draft.date || key.slice(LOCAL_PREFIX.length, LOCAL_PREFIX.length + 10), count });
+    } catch { /* ignore damaged local drafts */ }
+  }
+  return records.sort((a, b) => b.date.localeCompare(a.date));
+}
+function updateFocusClock() {
+  const node = $("#focusClock");
+  if (!node) return;
+  const minutes = Math.floor(state.focusRemaining / 60);
+  const seconds = state.focusRemaining % 60;
+  node.textContent = `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  $("#focusToggle").textContent = state.focusInterval ? "暂停专注" : state.focusRemaining ? "开始 / 继续专注" : "本轮已完成";
+}
+function focusKey() { return `hsm-language-focus:${state.viewedDate}`; }
+function loadFocusTimer() {
+  clearInterval(state.focusInterval); state.focusInterval = null;
+  const stored = Number(localStorage.getItem(focusKey()));
+  state.focusRemaining = Number.isFinite(stored) && stored >= 0 && stored <= 45 * 60 ? stored : 45 * 60;
+  updateFocusClock();
+}
+function toggleFocusTimer() {
+  if (state.focusInterval) {
+    clearInterval(state.focusInterval); state.focusInterval = null; updateFocusClock(); return;
+  }
+  if (state.focusRemaining <= 0) return;
+  state.focusInterval = setInterval(() => {
+    state.focusRemaining = Math.max(0, state.focusRemaining - 1);
+    localStorage.setItem(focusKey(), String(state.focusRemaining));
+    updateFocusClock();
+    if (!state.focusRemaining) {
+      clearInterval(state.focusInterval); state.focusInterval = null;
+      updateFocusClock();
+    }
+  }, 1000);
+  updateFocusClock();
+}
+function resetFocusTimer() {
+  clearInterval(state.focusInterval); state.focusInterval = null; state.focusRemaining = 45 * 60;
+  localStorage.setItem(focusKey(), String(state.focusRemaining)); updateFocusClock();
+}
+function updateDashboard() {
+  if (!state.draft || !state.sourceDate) return;
+  const history = localLearningHistory();
+  const dates = new Set(history.map((item) => item.date));
+  const todayCount = draftEvidenceCount(state.draft);
+  const submitted = localStorage.getItem(`hsm-language-submitted:${state.viewedDate}`) === "true";
+  $("#todayCompletion").textContent = submitted ? "已提交" : todayCount ? "进行中" : "未开始";
+  $("#attemptCount").textContent = `${state.draft.attempts?.length || 0} 次`;
+  let streak = 0, cursor = isoLocalDate();
+  if (!dates.has(cursor)) cursor = addIsoDays(cursor, -1);
+  while (dates.has(cursor)) { streak += 1; cursor = addIsoDays(cursor, -1); }
+  $("#studyStreak").textContent = `${streak} 天`;
+  let week = 0;
+  for (let offset = 0; offset < 7; offset += 1) if (dates.has(addIsoDays(isoLocalDate(), -offset))) week += 1;
+  $("#weekCompletion").textContent = `${week}/7`;
+  const checklist = $("#todayChecklist"); checklist.replaceChildren();
+  const ielts = state.byDate.ielts.get(state.sourceDate), japanese = state.byDate.japanese.get(state.sourceDate);
+  const items = [
+    ielts ? `雅思 ${ielts.day}：${ielts.focus}` : "雅思任务待发布",
+    japanese ? `日语 ${japanese.day}：${japanese.task}` : "日语任务待发布",
+    ...(state.plan?.carryover?.length ? [`定向补练 ${state.plan.carryover.length} 项（只补知识错误或未完成项）`] : []),
+  ];
+  items.forEach((item) => checklist.append(el("li", {}, item)));
+  const historyRoot = $("#historyList"); historyRoot.replaceChildren();
+  if (!history.length) historyRoot.append(el("p", { class: "prose" }, "还没有真实保存的学习记录。"));
+  history.slice(0, 30).forEach((item) => historyRoot.append(el("div", { class: "history-item" }, el("span", {}, item.date), el("strong", {}, `${item.count} 条真实记录`))));
+}
 function markChanged() {
   state.draft.updatedAt = new Date().toISOString();
   localStorage.setItem(localKey(), JSON.stringify(state.draft));
   $("#saveState").textContent = "已暂存在本机；正在同步 Cloudflare…";
   clearTimeout(state.saveTimer);
   state.saveTimer = setTimeout(saveCloud, 750);
+  updateDashboard();
 }
 async function saveCloud() {
   clearTimeout(state.saveTimer);
@@ -141,6 +295,7 @@ async function loadDraft() {
   } catch { cloud = null; }
   const newest = [local, cloud].filter(Boolean).sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")))[0];
   state.draft = normalizeDraft(newest, state.viewedDate);
+  if (newest) localStorage.setItem(localKey(), JSON.stringify(state.draft));
   $("#saveState").textContent = newest ? "已恢复此前暂存的进度。" : "尚无暂存进度；填写后会自动保存。";
 }
 function addIsoDays(date, days) {
@@ -201,11 +356,21 @@ function section(title, content, links = []) {
 function answerDetails(text, title = "完成后查看参考答案与解析") {
   return text ? el("details", { class: "answer" }, el("summary", {}, title), el("p", { class: "prose" }, text)) : null;
 }
+function externalDataStatus({ hasLink, completed, userAnswer }) {
+  if (userAnswer?.trim()) return "已收到你的作答；若要逐题分析，仍需可靠取得或由你粘贴真实题目。";
+  if (completed) return "已完成，但暂无逐题题目和作答数据；系统不会据链接臆造内容。";
+  if (hasLink) return "当前只有外部链接，尚未取得真实题目；完成后请粘贴题目或实际作答。";
+  return "当前题目数据不可用，等待用户录入；系统不会伪造题目或答案。";
+}
 function responseField(id, label, prompt, placeholder = "先独立完成，再查看解析") {
   const record = exercise(id, prompt);
   const input = el("textarea", { placeholder }, record.response);
   input.value = record.response;
-  input.addEventListener("input", () => { record.response = input.value; markChanged(); });
+  input.addEventListener("input", () => {
+    record.response = input.value;
+    saveLearningAttempt({ questionId: id, userAnswer: input.value, source: "daily_course" });
+    markChanged();
+  });
   return el("div", { class: "field" }, el("label", {}, label, el("small", {}, "输入会自动暂存"), input));
 }
 function doneLine(id, prompt, label = "已完成") {
@@ -213,6 +378,48 @@ function doneLine(id, prompt, label = "已完成") {
   const input = el("input", { type: "checkbox", checked: record.response === "已完成" });
   input.addEventListener("change", () => { record.response = input.checked ? "已完成" : ""; markChanged(); });
   return el("label", { class: "checkline" }, input, label);
+}
+function renderStructuredPractice(course, title) {
+  const questions = Array.isArray(course.questions) ? course.questions : [];
+  const wrap = el("section", { class: "section structured-practice" }, el("h3", {}, title), el("p", { class: "prose" }, "系统已获得 Excel 中的真实题目。逐题答案仅在表格确实提供时显示。"));
+  if (!questions.length) {
+    wrap.append(responseField(`${course.date}:practice`, "你的答案", course.practice));
+    wrap.append(answerDetails(course.explanation));
+    return wrap;
+  }
+  questions.forEach((question, index) => {
+    const record = exercise(question.id, question.prompt);
+    record.kind = "quiz";
+    const input = el("textarea", { placeholder: "先独立作答，再查看答案或解析" });
+    input.value = record.response;
+    input.addEventListener("input", () => {
+      record.response = input.value;
+      saveLearningAttempt({ questionId: question.id, userAnswer: input.value, source: question.source, language: question.language });
+      markChanged();
+    });
+    const card = el("article", { class: "question-card" },
+      el("h4", {}, `${index + 1}. ${question.stem || question.prompt}`));
+    if (Array.isArray(question.options) && question.options.length) {
+      card.append(el("ul", { class: "question-options" }, question.options.map((option) => el("li", {}, `${option.id} ${option.text}`))));
+    }
+    card.append(el("label", {}, "你的答案", input));
+    if (question.answerStatus === "available") {
+      card.append(answerDetails(`答案：${question.answer}${question.explanation ? `\n解析：${question.explanation}` : ""}`, "完成后查看本题答案与解析"));
+      card.append(el("div", { class: "buttons" },
+        el("button", { type: "button", class: "secondary", onclick: () => {
+          saveLearningAttempt({ questionId: question.id, userAnswer: record.response, result: "correct", source: question.source, language: question.language });
+          markChanged();
+        } }, "核对后：答案正确"),
+        el("button", { type: "button", class: "secondary", onclick: () => {
+          saveLearningAttempt({ questionId: question.id, userAnswer: record.response, result: "knowledge_error", source: question.source, language: question.language });
+          markChanged();
+        } }, "核对后：需要复习")));
+    } else {
+      card.append(el("p", { class: "prose" }, "这一天没有可靠的逐题标准答案，系统不会伪造答案或自动判错；保留你的作答，等待人工批改。"));
+    }
+    wrap.append(card);
+  });
+  return wrap;
 }
 function renderVocabulary(course, language, prefix) {
   const wrap = el("section", { class: "section" }, el("h3", {}, `核心词汇 · ${course.vocabulary.length} 个`));
@@ -235,21 +442,31 @@ function renderIelts(course) {
   const root = $("#ielts"); root.replaceChildren();
   root.append(el("header", { class: "course-head" }, el("small", {}, `${course.day} · ${course.stage}`), el("h2", {}, `雅思英语 · ${course.focus}`), el("p", {}, `${course.duration}｜课程、原创练习和配套练习按表格顺序完成。`)));
   root.append(section("今日任务", course.task));
-  root.append(section("中文课程 / 讲解", course.course, [externalLink("打开当天讲解", course.courseUrl)]));
+  root.append(section("中文课程 / 讲解", course.course, externalLinks("打开当天讲解", course.courseUrls?.length ? course.courseUrls : course.courseUrl)));
   root.append(renderVocabulary(course, "en-US", "英语"));
+  root.append(renderSpeechPractice({ lines: englishLines(course), language: "en-US", title: "英语词汇朗读录音与回放" }));
   const check = section("5 分钟闭卷验收", course.check);
   check.append(responseField(`ielts:${course.date}:check`, "你的口头验收记录", course.check, "记下答不上来的点；不必重复抄题")); root.append(check);
-  const practice = section("今日原创练习", course.practice);
-  practice.append(responseField(`ielts:${course.date}:practice`, "你的答案", course.practice));
-  practice.append(answerDetails(course.explanation)); root.append(practice);
-  const official = section("配套 / 官方练习", course.officialTask, [externalLink("打开原题或练习", course.officialUrl)]);
+  root.append(renderStructuredPractice(course, "今日原创练习"));
+  const official = section("配套 / 官方练习", course.officialTask, externalLinks("打开原题或练习", course.officialUrls?.length ? course.officialUrls : course.officialUrl));
   const task = englishTask(course.officialTask);
+  const officialStatus = el("p", { class: "prose external-data-status" }, externalDataStatus({ hasLink: Boolean(course.officialUrls?.length || course.officialUrl), completed: task.done, userAnswer: task.userAnswer }));
+  official.append(officialStatus);
   const done = el("input", { type: "checkbox", checked: task.done });
-  done.addEventListener("change", () => { task.done = done.checked; markChanged(); });
+  done.addEventListener("change", () => {
+    task.done = done.checked;
+    officialStatus.textContent = externalDataStatus({ hasLink: Boolean(course.officialUrls?.length || course.officialUrl), completed: task.done, userAnswer: task.userAnswer });
+    markChanged();
+  });
   const score = el("input", { placeholder: "例如 7/10", value: task.score }); score.value = task.score;
   score.addEventListener("input", () => { task.score = score.value; markChanged(); });
   const answer = el("textarea", { placeholder: "粘贴或填写你实际提交的答案" }); answer.value = task.userAnswer;
-  answer.addEventListener("input", () => { task.userAnswer = answer.value; markChanged(); });
+  answer.addEventListener("input", () => {
+    task.userAnswer = answer.value;
+    officialStatus.textContent = externalDataStatus({ hasLink: Boolean(course.officialUrls?.length || course.officialUrl), completed: task.done, userAnswer: task.userAnswer });
+    saveLearningAttempt({ questionId: `en-${course.date}-official`, userAnswer: answer.value, source: course.officialUrl || "external_official", language: "en-US" });
+    markChanged();
+  });
   const evidence = el("textarea", { placeholder: "题号、原文/音频定位、错因；晚间复盘会根据你的实际答案批改" }); evidence.value = task.evidence;
   evidence.addEventListener("input", () => { task.evidence = evidence.value; markChanged(); });
   official.append(el("label", { class: "checkline" }, done, "已完成原题"), el("div", { class: "field" }, el("label", {}, "得分", score)), el("div", { class: "field" }, el("label", {}, "你的实际答案", answer)), el("div", { class: "field" }, el("label", {}, "错题定位 / 证据", evidence)));
@@ -259,11 +476,56 @@ function japaneseLines(course) {
   const kana = (course.pronunciation.match(/[ぁ-んァ-ヶー]{1,}/g) || []);
   return [...new Set([...kana, ...course.vocabulary.map(([word]) => word)])].slice(0, 20);
 }
-function renderRecording(course) {
-  const lines = japaneseLines(course);
-  state.draft.recordingSets["ja-JP"] ||= { sentences: [], results: [], recordingEvidence: [] };
-  state.draft.recordingSets["ja-JP"].sentences = lines;
-  const sectionEl = el("section", { class: "section" }, el("h3", {}, "日语跟读录音与回放"), el("p", { class: "prose" }, "先听参考音，再任选一项录音。你读完后手动停止，页面会立即提供自己的录音回放；识别服务失败也会记作已朗读。"));
+function englishLines(course) {
+  return [...new Set(course.vocabulary.map(([word]) => String(word || "").trim()).filter(Boolean))].slice(0, 20);
+}
+function manuallyConfirmPronunciation(index, target, options = {}) {
+  const context = {
+    index,
+    target,
+    key: options.key || `daily:${index}`,
+    source: options.source || "daily",
+    language: options.language || "ja-JP",
+  };
+  const current = state.draft.results.find((item) => item.language === context.language && item.target === target) || {};
+  const result = {
+    ...current,
+    target,
+    language: context.language,
+    status: "manual_confirmed",
+    result: "manual_confirmed",
+    errorType: "manual_confirmed",
+    passed: true,
+    manualConfirmed: true,
+    manualConfirmedAt: new Date().toISOString(),
+    assessmentInconclusive: false,
+    retryRequired: false,
+    reason: "用户确认自己读对了",
+  };
+  state.draft.results = state.draft.results.filter((item) => !(item.language === context.language && item.target === target));
+  state.draft.results.push(result);
+  state.draft.recordingSets[context.language] ||= { sentences: [], results: [], recordingEvidence: [] };
+  const set = state.draft.recordingSets[context.language];
+  set.results = set.results.filter((item) => item.target !== target);
+  set.results.push(result);
+  const evidence = set.recordingEvidence.find((item) => item.target === target);
+  if (evidence) evidence.assessmentStatus = "manual_confirmed";
+  const topEvidence = state.draft.recordingEvidence.find((item) => item.language === context.language && item.target === target);
+  if (topEvidence) topEvidence.assessmentStatus = "manual_confirmed";
+  if (context.source === "carryover") {
+    const record = exercise(`carry:${state.viewedDate}:${index}`, target);
+    record.response = "已重读并由本人确认读音正确；不进入错题或后续补练";
+  }
+  savePronunciationAttempt(context, result);
+  markChanged();
+  rerenderRecordingSurfaces();
+}
+function renderSpeechPractice({ lines, language, title }) {
+  state.draft.recordingSets[language] ||= { sentences: [], results: [], recordingEvidence: [] };
+  state.draft.recordingSets[language].sentences = lines;
+  const sectionEl = el("section", { class: "section speech-practice", "data-language": language },
+    el("h3", {}, title),
+    el("p", { class: "prose" }, "先听参考音，再任选一项录音。你读完后手动停止，页面会立即提供自己的录音回放。当前只做可靠的朗读内容匹配与容错，不冒充专业音素评分。"));
   const statusText = state.recordingStopping
     ? "正在结束录音并生成回放…"
     : state.media
@@ -271,32 +533,30 @@ function renderRecording(course) {
       : state.audioUrl
         ? "录音已完成，回放就在刚才录制的句子下面。"
         : "请选择任意一句，点击“开始录音”。";
-  sectionEl.append(el("div", { id: "recordStatus", class: `record-status ${state.media || state.recordingStopping ? "active" : ""}` }, statusText));
+  sectionEl.append(el("div", { id: `recordStatus-${language}`, class: `record-status ${state.media || state.recordingStopping ? "active" : ""}` }, statusText));
   const list = el("div", { class: "record-list" });
   lines.forEach((line, index) => {
-    const key = `daily:${index}`;
-    const result = state.draft.results.find((item) => item.language === "ja-JP" && item.target === line);
+    const key = `daily:${language}:${index}`;
+    const result = state.draft.results.find((item) => item.language === language && item.target === line);
     const isCurrentRecording = Boolean(state.media) && state.recordingKey === key;
     const isCurrentStopping = state.recordingStopping && state.recordingKey === key;
     const recordButton = el("button", {
       type: "button",
       class: isCurrentRecording || isCurrentStopping ? "record-stop" : "",
-      onclick: isCurrentRecording ? stopRecording : () => beginRecording(index, line, { key, source: "daily" }),
+      onclick: isCurrentRecording ? stopRecording : () => beginRecording(index, line, { key, source: "daily", language }),
     }, isCurrentStopping ? "正在生成回放…" : isCurrentRecording ? "■ 结束录音并生成回放" : "开始录音");
     recordButton.disabled = isCurrentStopping || (Boolean(state.media) && !isCurrentRecording);
-    const listenButton = el("button", { type: "button", class: "secondary", onclick: () => speak(line, "ja-JP") }, "听参考音");
+    const listenButton = el("button", { type: "button", class: "secondary", onclick: () => speak(line, language) }, "听参考音");
     listenButton.disabled = Boolean(state.media) || state.recordingStopping;
-    const resultText = result
-      ? result.retryRequired
-        ? `本次未评分：${result.retryReason || "有效语音太少或转写异常"}。异常文字已忽略，请重新录音。`
-        : result.assessmentInconclusive
-        ? `识别为：${result.transcript || "未取得文字"}｜字面不同，无法可靠区分同音，不判错`
-        : `识别：${result.transcript || "评分暂不可用"}${result.score == null ? "" : `｜${result.score}%`}${result.homophoneAccepted ? "｜同音异写已通过" : ""}`
-      : "尚未录音";
+    const resultText = resultMessage(result);
+    const resultStatus = pronunciationStatus(result);
+    const confirmButton = result && ["inconclusive", "technical_error"].includes(resultStatus)
+      ? el("button", { type: "button", class: "secondary", onclick: () => manuallyConfirmPronunciation(index, line, { key, source: "daily", language }) }, "我确认自己读对了")
+      : null;
     const row = el("div", { class: `record-line ${state.recordingKey === key ? "current" : ""} ${isCurrentRecording || isCurrentStopping ? "recording" : ""}` },
       el("b", {}, `${index + 1}. ${line}`),
       el("div", {}, resultText),
-      el("div", { class: "buttons" }, listenButton, recordButton));
+      el("div", { class: "buttons" }, listenButton, recordButton, confirmButton));
     if (state.audioUrl && state.audioKey === key) row.append(el("div", { class: "record-playback" }, el("strong", {}, "你的录音回放"), el("audio", { controls: "", src: state.audioUrl })));
     list.append(row);
   });
@@ -306,14 +566,27 @@ function renderRecording(course) {
 function renderJapanese(course) {
   const root = $("#japanese"); root.replaceChildren();
   root.append(el("header", { class: "course-head" }, el("small", {}, `${course.day} · ${course.stage}`), el("h2", {}, "日语 N2 路线"), el("p", {}, `${course.duration}｜从五十音开始，按年度表逐日推进。`)));
-  root.append(section("今日假名 / 发音", course.pronunciation), section("今日学习任务", course.task), section("当天视频课程", course.course, [externalLink("打开当天视频", course.courseUrl)]));
+  root.append(section("今日假名 / 发音", course.pronunciation), section("今日学习任务", course.task), section("当天视频课程", course.course, externalLinks("打开当天视频", course.courseUrls?.length ? course.courseUrls : course.courseUrl)));
   root.append(renderVocabulary(course, "ja-JP", "日语"));
   const check = section("快速闭卷验收", course.check); check.append(responseField(`japanese:${course.date}:check`, "你的验收记录", course.check)); root.append(check);
-  const practice = section("今日原创练习题", course.practice); practice.append(responseField(`japanese:${course.date}:practice`, "你的答案", course.practice), answerDetails(course.explanation)); root.append(practice);
-  const official = section("JLPT / 官方题", course.officialTask, [externalLink("打开官方题", course.officialUrl)]); official.append(doneLine(`japanese:${course.date}:official`, course.officialTask), responseField(`japanese:${course.date}:official-notes`, "答案 / 错题记录", course.officialTask, "完成正式题后填写"), answerDetails(course.officialExplanation, "完成后查看官方正答 / 解析说明")); root.append(official);
-  const reading = section("阅读", course.reading, [externalLink("打开阅读材料", course.readingUrl)]); reading.append(doneLine(`japanese:${course.date}:reading`, course.reading)); root.append(reading);
-  const listening = section("听力", course.listening, [externalLink("打开音频", course.audioUrl), externalLink("打开听力题册", course.listeningBookUrl)]); listening.append(doneLine(`japanese:${course.date}:listening`, course.listening)); root.append(listening);
-  root.append(renderRecording(course));
+  root.append(renderStructuredPractice(course, "今日原创练习题"));
+  const official = section("JLPT / 官方题", course.officialTask, externalLinks("打开官方题", course.officialUrls?.length ? course.officialUrls : course.officialUrl));
+  const officialDoneRecord = exercise(`japanese:${course.date}:official`, course.officialTask);
+  const officialNotesRecord = exercise(`japanese:${course.date}:official-notes`, course.officialTask);
+  official.append(
+    el("p", { class: "prose external-data-status" }, externalDataStatus({ hasLink: Boolean(course.officialUrls?.length || course.officialUrl), completed: officialDoneRecord.response === "已完成", userAnswer: officialNotesRecord.response })),
+    doneLine(`japanese:${course.date}:official`, course.officialTask),
+    responseField(`japanese:${course.date}:official-notes`, "答案 / 错题记录", course.officialTask, "完成正式题后填写"),
+    answerDetails(course.officialExplanation, "完成后查看官方正答 / 解析说明"),
+  );
+  root.append(official);
+  const reading = section("阅读", course.reading, externalLinks("打开阅读材料", course.readingUrls?.length ? course.readingUrls : course.readingUrl)); reading.append(doneLine(`japanese:${course.date}:reading`, course.reading)); root.append(reading);
+  const listeningLinks = [
+    ...externalLinks("打开音频", course.audioUrls?.length ? course.audioUrls : course.audioUrl),
+    ...externalLinks("打开听力题册", course.listeningBookUrls?.length ? course.listeningBookUrls : course.listeningBookUrl),
+  ];
+  const listening = section("听力", course.listening, listeningLinks); listening.append(doneLine(`japanese:${course.date}:listening`, course.listening)); root.append(listening);
+  root.append(renderSpeechPractice({ lines: japaneseLines(course), language: "ja-JP", title: "日语跟读录音与回放" }));
 }
 function carryoverRecordingTarget(item) {
   if (item?.kind === "pronunciation" && item?.target) return String(item.target).trim();
@@ -340,17 +613,15 @@ function renderCarryoverRecording(item, index, target) {
     onclick: isCurrentRecording ? stopRecording : () => beginRecording(index, target, { key, source: "carryover", language }),
   }, isCurrentStopping ? "正在生成回放…" : isCurrentRecording ? "■ 结束重读并生成回放" : "开始重读录音");
   recordButton.disabled = isCurrentStopping || (Boolean(state.media) && !isCurrentRecording);
-  const status = result
-    ? result.retryRequired
-      ? `本次未评分：${result.retryReason || "有效语音太少或转写异常"}。异常文字已忽略，请重新录音。`
-      : result.assessmentInconclusive
-      ? `已重读；识别为「${result.transcript || "未取得文字"}」，因可能是同音异写，不判错。`
-      : `已重读；识别为「${result.transcript || "评分暂不可用"}」${result.score == null ? "" : `，${result.score}%`}${result.passed ? "，已通过" : "，仍需再读"}。`
-    : "尚未重读";
+  const status = resultMessage(result);
+  const resultStatus = pronunciationStatus(result);
+  const confirmButton = result && ["inconclusive", "technical_error"].includes(resultStatus)
+    ? el("button", { type: "button", class: "secondary", onclick: () => manuallyConfirmPronunciation(index, target, { key, source: "carryover", language }) }, "我确认自己读对了")
+    : null;
   const row = el("div", { class: `record-line ${state.recordingKey === key ? "current" : ""} ${isCurrentRecording || isCurrentStopping ? "recording" : ""}` },
     el("b", {}, target),
     el("div", {}, status),
-    el("div", { class: "buttons" }, listenButton, recordButton));
+    el("div", { class: "buttons" }, listenButton, recordButton, confirmButton));
   if (state.audioUrl && state.audioKey === key) row.append(el("div", { class: "record-playback" }, el("strong", {}, "你的本次重读回放"), el("audio", { controls: "", src: state.audioUrl })));
   return row;
 }
@@ -386,13 +657,14 @@ function render() {
   else if (repeatOnly) setStatus(`昨晚未通过项目较多：今天只重做列出的未通过项目；已经完成的作业不重做。\n原因：${state.plan.reason || "根据晚间复盘调整"}`, "warn");
   else if (state.plan?.carryover?.length) setStatus(`今天进入 ${state.sourceDate} 的新内容，并追加 ${state.plan.carryover.length} 个少量补练项目。已通过内容不重做。`, "warn");
   else setStatus(`正在学习年度计划 ${state.sourceDate}：雅思 ${ielts.day} + 日语 ${japanese.day}。页面内容来自两份 365 天表格。`);
+  updateDashboard();
   loadFeedback();
 }
 async function changeDate(date) {
   if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
   state.viewedDate = date; state.sourceDate = state.catalog.startDate; state.audioUrl = ""; state.audioTarget = ""; state.audioKey = ""; state.recordingIndex = -1; state.recordingKey = ""; state.recordingContext = null;
   $("#loading").classList.remove("hidden"); $("#courses").classList.add("hidden"); $("#submitArea").classList.add("hidden");
-  await Promise.all([loadPlan(), loadDraft()]); render();
+  await Promise.all([loadPlan(), loadDraft()]); loadFocusTimer(); render();
 }
 function shuffled(items) { const copy = [...items]; for (let i = copy.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [copy[i], copy[j]] = [copy[j], copy[i]]; } return copy; }
 function startQuiz(words, language, direction, prefix) {
@@ -423,6 +695,13 @@ function finishQuiz() {
   const quiz = state.quiz, id = `quiz:${state.sourceDate}:${quiz.prefix}:${quiz.direction}`;
   const rec = exercise(id, `${quiz.prefix}${quiz.direction === "meaning-to-word" ? "中译词" : "词译中"}随机测试`);
   rec.kind = "quiz"; rec.response = `${quiz.correct}/${quiz.items.length}\n` + quiz.attempts.filter((x) => !x.correct).map((x) => `${x.prompt}：${x.actual} → ${x.expected}`).join("\n");
+  quiz.attempts.forEach((item, index) => saveLearningAttempt({
+    questionId: `${id}:${index + 1}:${normalizeAnswer(item.expected)}`,
+    userAnswer: item.actual,
+    result: item.correct ? "correct" : "knowledge_error",
+    source: "vocabulary_quiz",
+    language: quiz.language,
+  }));
   markChanged(); $("#quizResult").textContent = `本轮得分：${quiz.correct}/${quiz.items.length}。错题已自动保存。`; $("#checkQuiz").textContent = "关闭"; $("#checkQuiz").onclick = () => $("#quiz").close();
 }
 function speak(text, language) {
@@ -433,8 +712,12 @@ function speak(text, language) {
 }
 function rerenderRecordingSurfaces() {
   renderCarryover();
-  const course = state.byDate.japanese.get(state.sourceDate);
-  if (course && !$("#courses").classList.contains("hidden")) renderJapanese(course);
+  const ielts = state.byDate.ielts.get(state.sourceDate);
+  const japanese = state.byDate.japanese.get(state.sourceDate);
+  if (!$("#courses").classList.contains("hidden")) {
+    if (ielts) renderIelts(ielts);
+    if (japanese) renderJapanese(japanese);
+  }
 }
 async function beginRecording(index, target, options = {}) {
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { alert("当前浏览器不支持网页录音，请使用最新版 Chrome/Edge。 "); return; }
@@ -468,22 +751,58 @@ async function finishRecording(context) {
   state.draft.recordingSets[language] ||= { sentences: [], results: [], recordingEvidence: [] };
   const set = state.draft.recordingSets[language]; set.recordingEvidence = set.recordingEvidence.filter((x) => x.target !== target); set.recordingEvidence.push(evidence); markChanged();
   rerenderRecordingSurfaces();
-  const status = $("#recordStatus"); if (status) status.textContent = "录音已完成，可以立即回放；正在请求日语识别评分…";
+  const status = $(`#recordStatus-${language}`); if (status) status.textContent = "录音已完成，可以立即回放；正在请求朗读识别匹配…";
   try {
     const query = new URLSearchParams({ target, language, durationMs: String(durationMs) });
     const response = await fetch(`${API}/assess?${query}`, { method: "POST", headers: { "content-type": blob.type || "audio/webm" }, body: blob }); const data = await response.json(); if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
-    const result = { target, transcript: data.transcript || "", language, assessment: language === "ja-JP" ? "cloudflare-whisper-v4-japanese" : "cloudflare-whisper-v2-unbiased", score: data.score !== null && data.score !== undefined && Number.isFinite(Number(data.score)) ? Number(data.score) : null, textScore: data.textScore, phoneticScore: data.phoneticScore, homophoneAccepted: data.homophoneAccepted === true, assessmentInconclusive: data.assessmentInconclusive === true, retryRequired: data.retryRequired === true, retryReason: data.retryReason || "", readingTarget: data.readingTarget || "", readingTranscript: data.readingTranscript || "", passed: data.passed === true };
+    const resultStatus = ["passed", "failed", "inconclusive", "technical_error", "manual_confirmed"].includes(data.status)
+      ? data.status : data.assessmentInconclusive ? "inconclusive" : data.passed ? "passed" : "failed";
+    const result = {
+      target,
+      transcript: data.transcript || "",
+      language,
+      assessment: "cloudflare-whisper-v5-tristate",
+      status: resultStatus,
+      result: data.result || centralResult(resultStatus),
+      errorType: data.errorType || centralResult(resultStatus),
+      reasonCode: data.reasonCode || "",
+      reason: data.reason || data.retryReason || "",
+      matchScore: data.matchScore !== null && data.matchScore !== undefined && Number.isFinite(Number(data.matchScore)) ? Number(data.matchScore) : null,
+      score: data.score !== null && data.score !== undefined && Number.isFinite(Number(data.score)) ? Number(data.score) : null,
+      textScore: data.textScore,
+      phoneticScore: data.phoneticScore,
+      homophoneAccepted: data.homophoneAccepted === true,
+      assessmentInconclusive: resultStatus === "inconclusive",
+      retryRequired: resultStatus === "inconclusive",
+      retryReason: data.reason || data.retryReason || "",
+      readingTarget: data.readingTarget || "",
+      readingTranscript: data.readingTranscript || "",
+      passed: resultStatus === "passed" || resultStatus === "manual_confirmed",
+    };
     state.draft.results = state.draft.results.filter((x) => !(x.language === language && x.target === target)); state.draft.results.push(result); set.results = set.results.filter((x) => x.target !== target); set.results.push(result);
-    evidence.assessmentStatus = result.retryRequired ? "unavailable" : "completed"; evidence.transcript = result.transcript; evidence.score = result.score;
+    evidence.assessmentStatus = resultStatus; evidence.transcript = result.transcript; evidence.score = result.matchScore;
+    savePronunciationAttempt(context, result);
     if (source === "carryover") {
       const record = exercise(`carry:${state.viewedDate}:${index}`, target);
-      record.response = result.retryRequired ? `本次录音异常，需重新录音：${result.retryReason}` : result.assessmentInconclusive ? "已重新录音；转写字面不同，系统未据此判错" : result.passed ? `已重新录音并通过（${result.score}%）` : `已重新录音，仍需重读（${result.score}%）`;
+      record.response = resultStatus === "passed" ? "已重新录音，朗读内容可靠匹配"
+        : resultStatus === "failed" ? `已重新录音，读音仍有明确差异：${result.reason}`
+          : resultStatus === "inconclusive" ? `已重新录音，但无法可靠判断：${result.reason}`
+            : `已重新录音并可回放；识别出现技术问题：${result.reason}`;
     }
   } catch (error) {
-    evidence.assessmentStatus = "unavailable"; evidence.transcript = ""; evidence.score = null;
+    const result = {
+      target, transcript: "", language, assessment: "cloudflare-whisper-v5-tristate",
+      status: "technical_error", result: "technical_error", errorType: "technical_error",
+      reasonCode: "request_failure", reason: `识别请求失败：${error.message}`,
+      matchScore: null, score: null, assessmentInconclusive: false, retryRequired: false, passed: false,
+    };
+    state.draft.results = state.draft.results.filter((x) => !(x.language === language && x.target === target)); state.draft.results.push(result);
+    set.results = set.results.filter((x) => x.target !== target); set.results.push(result);
+    evidence.assessmentStatus = "technical_error"; evidence.transcript = ""; evidence.score = null;
+    savePronunciationAttempt(context, result);
     if (source === "carryover") {
       const record = exercise(`carry:${state.viewedDate}:${index}`, target);
-      record.response = "已重新录音并可回放；自动评分暂不可用";
+      record.response = "已重新录音并可回放；识别出现技术问题，不计为知识错误";
     }
   }
   const topEvidence = state.draft.recordingEvidence.find((item) => item.language === language && item.target === target);
@@ -499,7 +818,8 @@ async function submit() {
   await saveCloud(); const button = $("#submit"); button.disabled = true; $("#submitStatus").textContent = "正在提交…";
   try {
     const response = await fetch(`${API}/submit`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(state.draft) }); const data = await response.json(); if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
-    $("#submitStatus").textContent = `${data.message || "已提交。"}\n${data.reviewStatus || "晚间复盘只会要求补做未完成或未通过项目。"}`; await loadFeedback();
+    localStorage.setItem(`hsm-language-submitted:${state.viewedDate}`, "true");
+    $("#submitStatus").textContent = `${data.message || "已提交。"}\n${data.reviewStatus || "晚间复盘只会要求补做未完成或未通过项目。"}`; updateDashboard(); await loadFeedback();
   } catch (error) { $("#submitStatus").textContent = `提交失败：${error.message}。本机进度仍在，可稍后重试。`; } finally { button.disabled = false; }
 }
 async function loadFeedback() {
@@ -520,6 +840,7 @@ async function init() {
       if (state.media) { alert("请先停止当前录音，再切换日期。"); input.value = state.viewedDate; return; }
       changeDate(input.value);
     }); $("#retrySave").addEventListener("click", saveCloud); $("#submit").addEventListener("click", submit); $("#closeQuiz").addEventListener("click", () => $("#quiz").close());
+    $("#focusToggle").addEventListener("click", toggleFocusTimer); $("#focusReset").addEventListener("click", resetFocusTimer);
     await changeDate(input.value);
   } catch (error) { $("#loading").textContent = `年度课程加载失败：${error.message}`; $("#loading").className = "status bad"; setStatus("无法读取年度计划，页面没有使用旧德语数据。", "bad"); }
 }

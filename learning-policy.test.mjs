@@ -52,3 +52,44 @@ test("a missing daily plan inherits the latest published progress instead of usi
   assert.match(app, /inherit=1|inherit:\s*"1"/);
   assert.doesNotMatch(app, /state\.plan\?\.sourceDate \|\| state\.viewedDate/);
 });
+
+test("structured questions have stable IDs and never invent missing IELTS answers", () => {
+  const all = [...plan.ielts.flatMap((day) => day.questions), ...plan.japanese.flatMap((day) => day.questions)];
+  assert.equal(new Set(all.map((question) => question.id)).size, all.length);
+  for (const question of all) {
+    for (const key of ["id", "questionType", "prompt", "stem", "options", "answer", "explanation", "source", "externalUrl", "day", "date", "language", "learningStage", "answerStatus"]) {
+      assert.ok(Object.hasOwn(question, key), `${question.id}: missing ${key}`);
+    }
+  }
+  const ieltsDaysWithAnswers = plan.ielts.filter((day) => day.questions.some((question) => question.answerStatus === "available"));
+  assert.equal(ieltsDaysWithAnswers.length, 33);
+  assert.ok(plan.ielts.some((day) => day.questions.some((question) => question.answerStatus === "manual" && !question.answer)));
+  assert.equal(plan.japanese.every((day) => day.questions.every((question) => question.answerStatus === "available")), true);
+});
+
+test("multi-video Japanese lessons keep every link as an independent resource", () => {
+  const multi = plan.japanese.filter((day) => day.courseUrls.length > 1);
+  assert.equal(multi.length, 137);
+  for (const day of multi) {
+    assert.equal(day.courseUrls.every((url) => /^https?:\/\/\S+$/.test(url)), true);
+    assert.equal(day.courseUrl, day.courseUrls[0]);
+  }
+  assert.match(app, /externalLinks/);
+});
+
+test("English and Japanese use one shared recorder and central result model", () => {
+  assert.match(app, /function renderSpeechPractice/);
+  assert.match(app, /language: "en-US"/);
+  assert.match(app, /language: "ja-JP"/);
+  assert.match(app, /manual_confirmed/);
+  assert.doesNotMatch(app, /result\.score}%/);
+});
+
+test("the learning desk exposes today's work, focus mode, and real-record history", () => {
+  assert.match(html, /id="dashboard"/);
+  assert.match(html, /id="focusClock"/);
+  assert.match(html, /id="historyList"/);
+  assert.match(app, /45 \* 60/);
+  assert.match(app, /localLearningHistory/);
+  assert.match(app, /draftEvidenceCount/);
+});

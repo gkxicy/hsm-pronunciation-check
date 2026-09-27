@@ -1,7 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { germanPhoneticCode, scoreSpeech, scoreJapaneseReadings, japaneseTranscriptionAnomaly } from "./worker.js";
+import {
+  evaluateJapanesePronunciation,
+  evaluateEnglishPronunciation,
+  germanPhoneticCode,
+  isKnowledgeError,
+  japaneseTranscriptionAnomaly,
+  normalizeJapanese,
+  scoreJapaneseReadings,
+  scoreSpeech,
+} from "./worker.js";
 import worker from "./worker.js";
 
 test('feedback access is device-scoped and writers require a configured secret',async()=>{
@@ -182,7 +191,9 @@ test("a kanji-shaped ASR mismatch is not marked wrong when reading conversion is
     body: new Uint8Array([1]),
   }), env);
   const data = await response.json();
-  assert.equal(data.passed, true);
+  assert.equal(data.status, "inconclusive");
+  assert.equal(data.errorType, "inconclusive");
+  assert.equal(data.passed, false);
   assert.equal(data.score, null);
   assert.equal(data.assessmentInconclusive, true);
 });
@@ -205,7 +216,8 @@ test("short-audio Japanese hallucinations are ignored instead of being scored", 
   assert.equal(data.retryRequired, true);
   assert.equal(data.passed, false);
   assert.equal(data.score, null);
-  assert.equal(data.transcript, "");
+  assert.equal(data.status, "inconclusive");
+  assert.equal(data.transcript, "ご視聴ありがとうございました");
   assert.match(data.retryReason, /识别文字远长|异常转写/);
   assert.equal(calls, 1, "an obvious hallucination must be stopped before kana conversion");
 });
@@ -213,6 +225,70 @@ test("short-audio Japanese hallucinations are ignored instead of being scored", 
 test("a correctly recognized single kana is not rejected as too short", () => {
   assert.equal(japaneseTranscriptionAnomaly("あ", "あ", 350), "");
   assert.match(japaneseTranscriptionAnomaly("あ", "こんにちは", 900), /识别文字远长/);
+});
+
+test("Japanese normalization ignores punctuation and treats hiragana and katakana as equivalent", () => {
+  assert.equal(normalizeJapanese(" こんにちは、"), "こんにちは");
+  assert.equal(normalizeJapanese("コンニチハ"), "こんにちは");
+  assert.equal(evaluateJapanesePronunciation({ target: "こんにちは、", transcript: "こんにちは", durationMs: 1200 }).status, "passed");
+  assert.equal(evaluateJapanesePronunciation({ target: "コンニチハ", transcript: "こんにちは", durationMs: 1200 }).status, "passed");
+});
+
+test("Japanese kanji and matching kana reading pass without comparing surface spelling", () => {
+  const outcome = evaluateJapanesePronunciation({
+    target: "箸（はし）", transcript: "はし", targetReading: "はし", transcriptReading: "はし", durationMs: 900,
+  });
+  assert.equal(outcome.status, "passed");
+  assert.equal(outcome.errorType, "correct");
+});
+
+test("a single kana with an unrelated long transcription is inconclusive, not a knowledge error", () => {
+  const outcome = evaluateJapanesePronunciation({ target: "つ", transcript: "本日はよろしくお願いします", durationMs: 1000 });
+  assert.equal(outcome.status, "inconclusive");
+  assert.equal(outcome.errorType, "inconclusive");
+  assert.equal(isKnowledgeError(outcome), false);
+});
+
+test("an empty speech transcript is a technical error and cannot enter review", () => {
+  const outcome = evaluateJapanesePronunciation({ target: "こんにちは", transcript: "", durationMs: 1000 });
+  assert.equal(outcome.status, "technical_error");
+  assert.equal(outcome.errorType, "technical_error");
+  assert.equal(isKnowledgeError(outcome), false);
+});
+
+test("a clear long Japanese reading mismatch is the only kind classified as knowledge error", () => {
+  const outcome = evaluateJapanesePronunciation({ target: "こんにちは", transcript: "さようなら", durationMs: 1500 });
+  assert.equal(outcome.status, "failed");
+  assert.equal(outcome.errorType, "knowledge_error");
+  assert.equal(isKnowledgeError(outcome), true);
+});
+
+test("speech API failures return a structured technical error instead of a false failure", async () => {
+  const response = await worker.fetch(new Request("https://test/assess?target=%E3%81%93%E3%82%93%E3%81%AB%E3%81%A1%E3%81%AF&language=ja-JP", {
+    method: "POST", body: new Uint8Array([1, 2, 3]),
+  }), { AI: { run: async () => { throw new Error("timeout"); } } });
+  const data = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(data.status, "technical_error");
+  assert.equal(data.errorType, "technical_error");
+  assert.equal(data.passed, false);
+});
+
+test("manual confirmation survives cloud storage without becoming a knowledge error", async () => {
+  let saved;
+  const response = await worker.fetch(new Request("https://test/draft", {
+    method: "POST",
+    body: JSON.stringify({
+      date: "2026-09-15", deviceId: "test-device-123456789",
+      results: [{ target: "つ", language: "ja-JP", status: "manual_confirmed", manualConfirmed: true, passed: true }],
+      attempts: [{ question_id: "day1:pronunciation:ja:0", user_answer: "つ", result: "manual_confirmed", error_type: "manual_confirmed", language: "ja-JP", day: 1 }],
+    }),
+  }), { PRONUNCIATION_REPORTS: { put: async (_key, value) => { saved = JSON.parse(value); } } });
+  assert.equal(response.status, 200);
+  assert.equal(saved.results[0].status, "manual_confirmed");
+  assert.equal(saved.results[0].errorType, "manual_confirmed");
+  assert.equal(saved.attempts[0].result, "manual_confirmed");
+  assert.equal(isKnowledgeError(saved.results[0]), false);
 });
 
 test("published plans preserve structured pronunciation carryover fields", async () => {
@@ -273,4 +349,14 @@ test("English continues to use spelling-based transcript comparison", () => {
   const result = scoreSpeech("write", "right", "en-US");
   assert.equal(result.score, 0);
   assert.equal(result.phoneticScore, null);
+});
+
+test("English uses the shared result model without pretending to provide phoneme scoring", () => {
+  const passed = evaluateEnglishPronunciation({ target: "industrial sales", transcript: "industrial sales" });
+  const uncertain = evaluateEnglishPronunciation({ target: "schedule", transcript: "scheduled" });
+  assert.equal(passed.status, "passed");
+  assert.equal(passed.errorType, "correct");
+  assert.equal(uncertain.status, "inconclusive");
+  assert.equal(uncertain.errorType, "inconclusive");
+  assert.equal("pronunciationScore" in passed, false);
 });
