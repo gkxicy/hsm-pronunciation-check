@@ -26,6 +26,10 @@ const state = {
   recordingContext: null,
   recordingTarget: "",
   recordingStopping: false,
+  recordingRequesting: false,
+  recordingAssessing: false,
+  dateLoading: false,
+  submitting: false,
   audioUrl: "",
   audioTarget: "",
   audioKey: "",
@@ -135,7 +139,6 @@ function savePronunciationAttempt(context, result) {
     language: context.language,
     day: Number((state.byDate[context.language === "ja-JP" ? "japanese" : "ielts"].get(state.sourceDate)?.day || "").match(/\d+/)?.[0]) || null,
   };
-  state.draft.attempts = state.draft.attempts.filter((item) => item.question_id !== attempt.question_id);
   state.draft.attempts.push(attempt);
 }
 function saveLearningAttempt({ questionId, userAnswer, result = "inconclusive", source = "web" , language = "" }) {
@@ -214,8 +217,9 @@ function updateFocusClock() {
 function focusKey() { return `hsm-language-focus:${state.viewedDate}`; }
 function loadFocusTimer() {
   clearInterval(state.focusInterval); state.focusInterval = null;
-  const stored = Number(localStorage.getItem(focusKey()));
-  state.focusRemaining = Number.isFinite(stored) && stored >= 0 && stored <= 45 * 60 ? stored : 45 * 60;
+  const raw = localStorage.getItem(focusKey());
+  const stored = raw === null || raw.trim() === "" ? NaN : Number(raw);
+  state.focusRemaining = Number.isInteger(stored) && stored >= 0 && stored <= 45 * 60 ? stored : 45 * 60;
   updateFocusClock();
 }
 function toggleFocusTimer() {
@@ -266,6 +270,7 @@ function updateDashboard() {
   history.slice(0, 30).forEach((item) => historyRoot.append(el("div", { class: "history-item" }, el("span", {}, item.date), el("strong", {}, `${item.count} 条真实记录`))));
 }
 function markChanged() {
+  localStorage.removeItem(`hsm-language-submitted:${state.viewedDate}`);
   state.draft.updatedAt = new Date().toISOString();
   localStorage.setItem(localKey(), JSON.stringify(state.draft));
   $("#saveState").textContent = "已暂存在本机；正在同步 Cloudflare…";
@@ -275,13 +280,16 @@ function markChanged() {
 }
 async function saveCloud() {
   clearTimeout(state.saveTimer);
+  state.saveTimer = null;
+  const draft = state.draft;
+  if (!draft) return;
+  const savedVersion = draft.updatedAt;
   try {
-    const response = await fetch(`${API}/draft`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(state.draft) });
-    const data = await response.json();
+    const { response, data } = await fetchWithTimeout(`${API}/draft`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(draft) }, 15000, "云端保存超时，本机进度仍在，可稍后重试");
     if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
-    $("#saveState").textContent = "已保存到本机和 Cloudflare。";
+    if (state.draft === draft && draft.updatedAt === savedVersion) $("#saveState").textContent = "已保存到本机和 Cloudflare。";
   } catch (error) {
-    $("#saveState").textContent = `本机已保存；Cloudflare 暂存失败：${error.message}`;
+    if (state.draft === draft && draft.updatedAt === savedVersion) $("#saveState").textContent = `本机已保存；Cloudflare 暂存失败：${error.message}`;
   }
 }
 async function loadDraft() {
@@ -526,7 +534,9 @@ function renderSpeechPractice({ lines, language, title }) {
   const sectionEl = el("section", { class: "section speech-practice", "data-language": language },
     el("h3", {}, title),
     el("p", { class: "prose" }, "先听参考音，再任选一项录音。你读完后手动停止，页面会立即提供自己的录音回放。当前只做可靠的朗读内容匹配与容错，不冒充专业音素评分。"));
-  const statusText = state.recordingStopping
+  const statusText = state.recordingRequesting ? "正在请求麦克风权限，请在浏览器提示中允许录音…"
+    : state.recordingAssessing ? "录音已完成，可立即回放；正在识别，请稍候（最多约 30 秒）…"
+    : state.recordingStopping
     ? "正在结束录音并生成回放…"
     : state.media
       ? `正在录音：${state.recordingTarget}。读完后请点击当前句子的红色结束按钮。`
@@ -545,14 +555,15 @@ function renderSpeechPractice({ lines, language, title }) {
       class: isCurrentRecording || isCurrentStopping ? "record-stop" : "",
       onclick: isCurrentRecording ? stopRecording : () => beginRecording(index, line, { key, source: "daily", language }),
     }, isCurrentStopping ? "正在生成回放…" : isCurrentRecording ? "■ 结束录音并生成回放" : "开始录音");
-    recordButton.disabled = isCurrentStopping || (Boolean(state.media) && !isCurrentRecording);
+    recordButton.disabled = isCurrentStopping || (recordingBusy() && !isCurrentRecording);
     const listenButton = el("button", { type: "button", class: "secondary", onclick: () => speak(line, language) }, "听参考音");
-    listenButton.disabled = Boolean(state.media) || state.recordingStopping;
+    listenButton.disabled = recordingBusy();
     const resultText = resultMessage(result);
     const resultStatus = pronunciationStatus(result);
     const confirmButton = result && ["inconclusive", "technical_error"].includes(resultStatus)
       ? el("button", { type: "button", class: "secondary", onclick: () => manuallyConfirmPronunciation(index, line, { key, source: "daily", language }) }, "我确认自己读对了")
       : null;
+    if (confirmButton) confirmButton.disabled = recordingBusy();
     const row = el("div", { class: `record-line ${state.recordingKey === key ? "current" : ""} ${isCurrentRecording || isCurrentStopping ? "recording" : ""}` },
       el("b", {}, `${index + 1}. ${line}`),
       el("div", {}, resultText),
@@ -606,18 +617,19 @@ function renderCarryoverRecording(item, index, target) {
   const isCurrentRecording = Boolean(state.media) && state.recordingKey === key;
   const isCurrentStopping = state.recordingStopping && state.recordingKey === key;
   const listenButton = el("button", { type: "button", class: "secondary", onclick: () => speak(target, language) }, "听参考音");
-  listenButton.disabled = Boolean(state.media) || state.recordingStopping;
+  listenButton.disabled = recordingBusy();
   const recordButton = el("button", {
     type: "button",
     class: isCurrentRecording || isCurrentStopping ? "record-stop" : "",
     onclick: isCurrentRecording ? stopRecording : () => beginRecording(index, target, { key, source: "carryover", language }),
   }, isCurrentStopping ? "正在生成回放…" : isCurrentRecording ? "■ 结束重读并生成回放" : "开始重读录音");
-  recordButton.disabled = isCurrentStopping || (Boolean(state.media) && !isCurrentRecording);
+  recordButton.disabled = isCurrentStopping || (recordingBusy() && !isCurrentRecording);
   const status = resultMessage(result);
   const resultStatus = pronunciationStatus(result);
   const confirmButton = result && ["inconclusive", "technical_error"].includes(resultStatus)
     ? el("button", { type: "button", class: "secondary", onclick: () => manuallyConfirmPronunciation(index, target, { key, source: "carryover", language }) }, "我确认自己读对了")
     : null;
+  if (confirmButton) confirmButton.disabled = recordingBusy();
   const row = el("div", { class: `record-line ${state.recordingKey === key ? "current" : ""} ${isCurrentRecording || isCurrentStopping ? "recording" : ""}` },
     el("b", {}, target),
     el("div", {}, status),
@@ -661,10 +673,17 @@ function render() {
   loadFeedback();
 }
 async function changeDate(date) {
+  if (recordingBusy() || state.dateLoading) { $("#date").value = state.viewedDate; return; }
+  state.dateLoading = true;
+  $("#date").disabled = true;
+  // Flush the outgoing draft before changing the timer's destination.
+  if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; await saveCloud(); }
+  try {
   if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
   state.viewedDate = date; state.sourceDate = state.catalog.startDate; state.audioUrl = ""; state.audioTarget = ""; state.audioKey = ""; state.recordingIndex = -1; state.recordingKey = ""; state.recordingContext = null;
   $("#loading").classList.remove("hidden"); $("#courses").classList.add("hidden"); $("#submitArea").classList.add("hidden");
   await Promise.all([loadPlan(), loadDraft()]); loadFocusTimer(); render();
+  } finally { state.dateLoading = false; $("#date").disabled = false; }
 }
 function shuffled(items) { const copy = [...items]; for (let i = copy.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [copy[i], copy[j]] = [copy[j], copy[i]]; } return copy; }
 function startQuiz(words, language, direction, prefix) {
@@ -721,16 +740,18 @@ function rerenderRecordingSurfaces() {
 }
 async function beginRecording(index, target, options = {}) {
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { alert("当前浏览器不支持网页录音，请使用最新版 Chrome/Edge。 "); return; }
-  if (state.media || state.recordingStopping) return;
+  if (recordingBusy() || state.dateLoading) return;
+  state.recordingRequesting = true;
+  rerenderRecordingSurfaces();
   try {
     window.speechSynthesis?.cancel(); document.querySelectorAll("audio").forEach((audio) => audio.pause());
     const context = { index, target, key: options.key || `daily:${index}`, source: options.source || "daily", language: options.language || "ja-JP" };
     state.stream = await navigator.mediaDevices.getUserMedia({ audio: true }); state.chunks = []; state.recordingIndex = index; state.recordingKey = context.key; state.recordingContext = context; state.recordingTarget = target; state.recordingStarted = Date.now(); state.recordingStopping = false;
     state.media = new MediaRecorder(state.stream); state.media.ondataavailable = (event) => { if (event.data.size) state.chunks.push(event.data); }; state.media.onstop = () => finishRecording(context);
-    state.media.start(); rerenderRecordingSurfaces();
+    state.media.start(); state.recordingRequesting = false; rerenderRecordingSurfaces();
   } catch (error) {
     state.stream?.getTracks().forEach((track) => track.stop()); state.stream = null; state.media = null; state.recordingStopping = false; state.recordingTarget = ""; state.recordingKey = ""; state.recordingContext = null;
-    alert(`无法开始录音：${error.message}`);
+    state.recordingRequesting = false; rerenderRecordingSurfaces(); alert(`无法开始录音：${error.message}`);
   }
 }
 function stopRecording() {
@@ -742,6 +763,7 @@ function stopRecording() {
 }
 async function finishRecording(context) {
   const { index, target, key, source, language } = context;
+  state.recordingAssessing = true;
   state.media = null; state.recordingStopping = false; state.recordingTarget = "";
   const blob = new Blob(state.chunks, { type: state.chunks[0]?.type || "audio/webm" }); if (state.audioUrl) URL.revokeObjectURL(state.audioUrl); state.audioUrl = URL.createObjectURL(blob); state.audioTarget = target; state.audioKey = key;
   const durationMs = Math.max(1, Date.now() - state.recordingStarted);
@@ -751,12 +773,12 @@ async function finishRecording(context) {
   state.draft.recordingSets[language] ||= { sentences: [], results: [], recordingEvidence: [] };
   const set = state.draft.recordingSets[language]; set.recordingEvidence = set.recordingEvidence.filter((x) => x.target !== target); set.recordingEvidence.push(evidence); markChanged();
   rerenderRecordingSurfaces();
-  const status = $(`#recordStatus-${language}`); if (status) status.textContent = "录音已完成，可以立即回放；正在请求朗读识别匹配…";
   try {
     const query = new URLSearchParams({ target, language, durationMs: String(durationMs) });
-    const response = await fetch(`${API}/assess?${query}`, { method: "POST", headers: { "content-type": blob.type || "audio/webm" }, body: blob }); const data = await response.json(); if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    if (!blob.size) throw new Error("录音为空，请检查麦克风后重试");
+    const { response, data } = await fetchWithTimeout(`${API}/assess?${query}`, { method: "POST", headers: { "content-type": blob.type || "audio/webm" }, body: blob }); if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
     const resultStatus = ["passed", "failed", "inconclusive", "technical_error", "manual_confirmed"].includes(data.status)
-      ? data.status : data.assessmentInconclusive ? "inconclusive" : data.passed ? "passed" : "failed";
+      ? data.status : data.assessmentInconclusive ? "inconclusive" : data.passed === true ? "passed" : "inconclusive";
     const result = {
       target,
       transcript: data.transcript || "",
@@ -793,7 +815,7 @@ async function finishRecording(context) {
     const result = {
       target, transcript: "", language, assessment: "cloudflare-whisper-v5-tristate",
       status: "technical_error", result: "technical_error", errorType: "technical_error",
-      reasonCode: "request_failure", reason: `识别请求失败：${error.message}`,
+      reasonCode: error.name === "TimeoutError" ? "request_timeout" : "request_failure", reason: `识别请求失败：${error.message}`,
       matchScore: null, score: null, assessmentInconclusive: false, retryRequired: false, passed: false,
     };
     state.draft.results = state.draft.results.filter((x) => !(x.language === language && x.target === target)); state.draft.results.push(result);
@@ -808,26 +830,61 @@ async function finishRecording(context) {
   const topEvidence = state.draft.recordingEvidence.find((item) => item.language === language && item.target === target);
   if (topEvidence) Object.assign(topEvidence, evidence, { language });
   state.recordingKey = ""; state.recordingContext = null; state.recordingIndex = -1;
+  state.recordingAssessing = false;
   markChanged(); rerenderRecordingSurfaces();
 }
+function recordingBusy() {
+  return Boolean(state.media) || state.recordingStopping || state.recordingRequesting || state.recordingAssessing || state.submitting;
+}
+async function fetchWithTimeout(url, options, timeoutMs = 30000, timeoutMessage = "识别超时，录音仍可回放；请稍后重试") {
+  const controller = new AbortController();
+  let timer;
+  try {
+    // Race as well as abort: recover even if a fetch implementation ignores its signal.
+    return await Promise.race([
+      fetch(url, { ...options, signal: controller.signal }).then(async (response) => ({ response, data: await response.json() })),
+      new Promise((_, reject) => { timer = setTimeout(() => {
+        const error = new Error(timeoutMessage); error.name = "TimeoutError";
+        reject(error); controller.abort();
+      }, timeoutMs); }),
+    ]);
+  } finally { clearTimeout(timer); }
+}
 function hasWork() {
-  return state.draft.vocabularyProgress.some((x) => x.done) || state.draft.languageExercises.some((x) => x.response.trim()) || state.draft.englishTasks.some((x) => x.done || x.userAnswer.trim() || x.score.trim()) || state.draft.recordingEvidence.length > 0;
+  return state.draft.vocabularyProgress.some((x) => x.done) || state.draft.languageExercises.some((x) => x.response?.trim()) || state.draft.englishTasks.some((x) => x.done || x.userAnswer?.trim() || x.score?.trim()) || state.draft.recordingEvidence.length > 0;
 }
 async function submit() {
+  if (recordingBusy() || state.dateLoading) { $("#submitStatus").textContent = "请等录音识别结束后再提交，避免漏掉本次结果。"; return; }
   if (!hasWork()) { $("#submitStatus").textContent = "请至少完成一项任务或录一条语音后再提交。"; return; }
-  await saveCloud(); const button = $("#submit"); button.disabled = true; $("#submitStatus").textContent = "正在提交…";
+  state.submitting = true;
+  const button = $("#submit"); button.disabled = true; $("#submitStatus").textContent = "正在保存并提交…";
+  rerenderRecordingSurfaces();
   try {
-    const response = await fetch(`${API}/submit`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(state.draft) }); const data = await response.json(); if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
-    localStorage.setItem(`hsm-language-submitted:${state.viewedDate}`, "true");
-    $("#submitStatus").textContent = `${data.message || "已提交。"}\n${data.reviewStatus || "晚间复盘只会要求补做未完成或未通过项目。"}`; updateDashboard(); await loadFeedback();
-  } catch (error) { $("#submitStatus").textContent = `提交失败：${error.message}。本机进度仍在，可稍后重试。`; } finally { button.disabled = false; }
+    await saveCloud();
+    const version = state.draft.updatedAt;
+    const { response, data } = await fetchWithTimeout(`${API}/submit`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(state.draft) }, 30000, "提交响应超时，请检查保存状态后重试"); if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    const unchanged = state.draft.updatedAt === version;
+    if (unchanged) localStorage.setItem(`hsm-language-submitted:${state.viewedDate}`, "true");
+    $("#submitStatus").textContent = `${data.message || "已提交。"}\n${data.reviewStatus || "晚间复盘只会要求补做未完成或未通过项目。"}${unchanged ? "" : "\n提交期间有新修改，请再次提交以包含补充内容。"}`; updateDashboard(); await loadFeedback();
+  } catch (error) { $("#submitStatus").textContent = `提交失败：${error.message}。本机进度仍在，可稍后重试。`; } finally { state.submitting = false; button.disabled = false; rerenderRecordingSurfaces(); }
 }
 async function loadFeedback() {
+  const date = state.viewedDate;
   try {
-    const response = await fetch(`${API}/feedback?date=${state.viewedDate}`, { headers: { authorization: `Device ${state.deviceId}` }, cache: "no-store" }); const data = await response.json();
-    const items = response.ok && data.ok && Array.isArray(data.feedback) ? data.feedback : []; $("#feedback").classList.toggle("hidden", !items.length); const root = $("#feedbackList"); root.replaceChildren();
-    items.forEach((item) => root.append(el("div", { class: "feedback-card" }, el("h4", {}, item.title || "复盘反馈"), el("p", {}, item.feedback || item.content || JSON.stringify(item)))));
-  } catch { $("#feedback").classList.add("hidden"); }
+    const { response, data } = await fetchWithTimeout(`${API}/feedback?date=${date}`, { headers: { authorization: `Device ${state.deviceId}` }, cache: "no-store" }, 10000, "解析读取超时，请稍后重试");
+    if (date !== state.viewedDate) return;
+    const reports = response.ok && data.ok && Array.isArray(data.feedback) ? data.feedback : [];
+    const items = reports.flatMap((report) => Array.isArray(report.items) ? report.items : [report]);
+    $("#feedback").classList.toggle("hidden", !items.length); const root = $("#feedbackList"); root.replaceChildren();
+    items.forEach((item) => {
+      const card = el("div", { class: "feedback-card" }, el("h4", {}, item.title || "复盘反馈"));
+      if (item.status) card.append(el("p", { class: "prose" }, item.status));
+      for (const [field, label] of [["question", "原题与信息"], ["requirements", "题目要求"], ["reasoning", "解题过程"], ["referenceAnswer", "参考答案及说明"], ["comparison", "你的作答与修改"], ["video", "本题视频"], ["feedback", "反馈"], ["content", "反馈"]]) {
+        if (typeof item[field] === "string" && item[field].trim()) card.append(el("h5", {}, label), el("p", { class: "prose" }, item[field]));
+      }
+      card.append(...externalLinks("解析来源", item.sources || [])); root.append(card);
+    });
+  } catch { if (date === state.viewedDate) $("#feedback").classList.add("hidden"); }
 }
 async function init() {
   state.deviceId = makeDeviceId();
@@ -837,7 +894,7 @@ async function init() {
     state.catalog.ielts.forEach((day) => state.byDate.ielts.set(day.date, day)); state.catalog.japanese.forEach((day) => state.byDate.japanese.set(day.date, day));
     const input = $("#date"); input.min = state.catalog.startDate; input.max = state.catalog.endDate; const today = isoLocalDate(); input.value = today < state.catalog.startDate ? state.catalog.startDate : today > state.catalog.endDate ? state.catalog.endDate : today;
     input.addEventListener("change", () => {
-      if (state.media) { alert("请先停止当前录音，再切换日期。"); input.value = state.viewedDate; return; }
+      if (recordingBusy() || state.dateLoading) { alert("请先结束录音并等待识别完成，再切换日期。"); input.value = state.viewedDate; return; }
       changeDate(input.value);
     }); $("#retrySave").addEventListener("click", saveCloud); $("#submit").addEventListener("click", submit); $("#closeQuiz").addEventListener("click", () => $("#quiz").close());
     $("#focusToggle").addEventListener("click", toggleFocusTimer); $("#focusReset").addEventListener("click", resetFocusTimer);
