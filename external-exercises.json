@@ -1,0 +1,127 @@
+{
+  "version": "20261004-official-materials-1",
+  "note": "独立核验补充层；不修改 Excel 年度原数据。中文题意为摘要，完整原题查看官方页/PDF。未覆盖的日期仍标记待核验，不伪造全年解析。",
+  "bindings": [
+    {"date":"2026-09-15","language":"en-US","packId":"bc-a2-changing-plans"},
+    {"date":"2026-09-16","language":"en-US","packId":"bc-a2-message-new-friend"},
+    {"date":"2026-09-17","language":"en-US","packId":"bc-a2-talking-job"},
+    {"date":"2026-09-18","language":"en-US","packId":"bc-a2-personal-profile"},
+    {"date":"2026-09-21","language":"en-US","packId":"bc-a1-be"},
+    {"date":"2026-10-01","language":"ja-JP","packId":"jlpt-n5-2018-grammar-1-3"},
+    {"date":"2026-10-02","language":"ja-JP","packId":"jlpt-n5-2018-grammar-4-6"}
+  ],
+  "packs": [
+    {
+      "id":"bc-a2-personal-profile","title":"A personal profile · 个人简介","language":"en-US","slot":"official","status":"source_verified","verifiedAt":"2026-10-04","sourceLabel":"British Council 官方 worksheet，第4页 Answers；中文解析为教学说明，不是官方批改。",
+      "pageUrl":"https://learnenglish.britishcouncil.org/free-resources/writing/a2/personal-profile",
+      "questionUrl":"https://learnenglish.britishcouncil.org/sites/podcasts/files/LearnEnglish-Writing-A2-A-personal-profile.pdf","questionPage":3,
+      "answerUrl":"https://learnenglish.britishcouncil.org/sites/podcasts/files/LearnEnglish-Writing-A2-A-personal-profile.pdf","answerPage":4,
+      "requirements":"先读官方范例与 Tips，做 Preparation、Task 1～3。本页提供 Task 3 逐题讲解及其余子任务的编号答案和讲解；完整英文题干、正文和选项在官方 PDF。另写60～80词是年度表安排的仿写任务，不是官方固定字数；介绍自己的特点、兴趣，不公开住址或电话。开放写作没有唯一标准答案，提交原文后按这些要求批改。",
+      "questions":[
+        {"id":"task3-1","locator":"Task 3 第1题","prompt":"个人简介可以提兴趣爱好吗？判断原题陈述正误。","answer":"True","explanation":"兴趣有助于介绍自己，是合适内容。"},
+        {"id":"task3-2","locator":"Task 3 第2题","prompt":"原题称无需检查拼写，是否正确？","answer":"False","explanation":"发布前仍须检查拼写和标点。"},
+        {"id":"task3-3","locator":"Task 3 第3题","prompt":"原题称每句都应使用表情符号，是否正确？","answer":"False","explanation":"可以使用不等于每句必须使用。"},
+        {"id":"task3-4","locator":"Task 3 第4题","prompt":"简介应真实、积极，是否正确？","answer":"True","explanation":"写自己的优点，但不捏造经历。"},
+        {"id":"task3-5","locator":"Task 3 第5题","prompt":"避免公布电话号码等私人信息，是否正确？","answer":"True","explanation":"保护隐私，不是禁止介绍性格和兴趣。"},
+        {"id":"task3-6","locator":"Task 3 第6题","prompt":"原题称所有爱好都要详尽展开，是否正确？","answer":"False","explanation":"选少数重点，不逐一堆砌细节。"},
+        {"id":"preparation","locator":"Preparation 三选","prompt":"按官方第1页选出适合简介的三类信息，写中文类别即可。","answer":"爱好、职业、性格","explanation":"这些可以介绍自己；住址涉及隐私，收入不是此练习要求的简介信息。"},
+        {"id":"task1-group","locator":"Task 1 第1～7题分类","prompt":"按官方第2页顺序，将七句分成事实或幽默，写1=…、2=…。","answer":"1=幽默；2=事实；3=事实；4=幽默；5=事实；6=事实；7=幽默","explanation":"第1、4、7句以夸张或玩笑制造亲切感；其余直接表达真实偏好、能力、观点或愿望。不要把幽默介绍当作字面经历。"},
+        {"id":"task2-group","locator":"Task 2 第1～6空","prompt":"按官方第3页词库完成六个空，写1=…、2=…。","answer":"1=talkative；2=especially；3=love to；4=prefer；5=bored；6=share","explanation":"1用形容词修饰性格；2突出阅读偏好；3后接动词原形；4表达更喜欢；5说明自己的感受；6表达和别人共同度假。"}
+      ]
+    },
+    {
+      "id":"bc-a2-message-new-friend","title":"A message to a new friend · 给新朋友的消息","language":"en-US","slot":"official","status":"source_verified","verifiedAt":"2026-10-04","sourceLabel":"British Council 官方 worksheet，第3页 Answers；中文题意及定位解析为教学说明。",
+      "pageUrl":"https://learnenglish.britishcouncil.org/free-resources/reading/a2/message-new-friend",
+      "questionUrl":"https://learnenglish.britishcouncil.org/sites/podcasts/files/LearnEnglish-Reading-A2-A-message-to-a-new-friend.pdf","questionPage":2,
+      "answerUrl":"https://learnenglish.britishcouncil.org/sites/podcasts/files/LearnEnglish-Reading-A2-A-message-to-a-new-friend.pdf","answerPage":3,
+      "requirements":"先读 PDF 第1页消息，再做第2页 Task 1 地点配对、Task 2 判断。这里逐题讲解 Task 2。不要把人物、城市或发送文件的方向混淆。完整正文和选项保留在官方 PDF。",
+      "questions":[
+        {"id":"task2-1","locator":"Task 2 第1题","prompt":"两人是不是学生时代的朋友？","answer":"False","explanation":"首段交代上周在销售会议结识。"},
+        {"id":"task2-2","locator":"Task 2 第2题","prompt":"他们是否从事销售相关工作？","answer":"True","explanation":"销售会议是相关工作线索。"},
+        {"id":"task2-3","locator":"Task 2 第3题","prompt":"新办公室位置是否很好？","answer":"True","explanation":"第二段列出周边餐饮、银行和交通。"},
+        {"id":"task2-4","locator":"Task 2 第4题","prompt":"办公室旁是否有地铁？","answer":"True","explanation":"第二段解释当地地铁名称。"},
+        {"id":"task2-5","locator":"Task 2 第5题","prompt":"没见过雪的人是 Mikel 吗？","answer":"False","explanation":"消息中说没见过雪的是收信人。"},
+        {"id":"task2-6","locator":"Task 2 第6题","prompt":"他们是否一起吃过晚饭？","answer":"True","explanation":"餐厅合照与愉快夜晚提供依据。"},
+        {"id":"task2-7","locator":"Task 2 第7题","prompt":"Mikel 还没有 Lucia 的邮箱吗？","answer":"True","explanation":"结尾正在索取邮箱。"},
+        {"id":"task2-8","locator":"Task 2 第8题","prompt":"准备发文件的人是 Lucia 吗？","answer":"False","explanation":"发送者应是写消息的 Mikel。"},
+        {"id":"task1-group","locator":"Task 1 第1～4题配对","prompt":"按官方第2页将四个城市与人物事件配对，写1=…、2=…。","answer":"1=b；2=c；3=d；4=a","explanation":"柏林是新办公室；伦敦是原居住地；墨西哥城是收信人的居住地；悉尼是两人见面的地点。按时间和人物定位，不因同一段出现多个城市就混选。"},
+        {"id":"preparation-group","locator":"Preparation 第1～6题","prompt":"按官方第1页选择正确消息用语，填 a 或 b。","answer":"1=b；2=a；3=a；4=a；5=a；6=b","explanation":"首次见面与认识状态不同；希望用 hope；介绍照片需有系动词；回忆用名词；send 的间接宾语在直接宾语前；结束消息使用相应告别语。"}
+      ]
+    },
+    {
+      "id":"bc-a2-changing-plans","title":"Changing plans · 改变计划","language":"en-US","slot":"official","status":"source_verified","verifiedAt":"2026-10-04","sourceLabel":"British Council 官方 worksheet，第4页 Answers；依据第3页 Transcript 定位。",
+      "pageUrl":"https://learnenglish.britishcouncil.org/free-resources/listening/a2/changing-plans",
+      "questionUrl":"https://learnenglish.britishcouncil.org/sites/podcasts/files/LearnEnglish-Listening-A2-Changing-plans.pdf","questionPage":1,
+      "answerUrl":"https://learnenglish.britishcouncil.org/sites/podcasts/files/LearnEnglish-Listening-A2-Changing-plans.pdf","answerPage":4,
+      "requirements":"先在官方页听音频，再做 Task 1、Task 2；第一遍不看脚本。本页逐题讲解 Task 1，每题选 a＝Francesco 或 b＝Sachi。完整音频留在官方页，第3页脚本用于做完后的核对。",
+      "questions":[
+        {"id":"task1-1","locator":"Task 1 第1题","prompt":"跑过街的是谁？","answer":"a","explanation":"开头男方解释自己刚跑过来。"},
+        {"id":"task1-2","locator":"Task 1 第2题","prompt":"打算买戏票的是谁？","answer":"b","explanation":"女方说当天下午准备买票，尚未买。"},
+        {"id":"task1-3","locator":"Task 1 第3题","prompt":"本周五不能看戏的是谁？","answer":"a","explanation":"男方当天另有音乐会。"},
+        {"id":"task1-4","locator":"Task 1 第4题","prompt":"谁从事音乐活动？","answer":"a","explanation":"男方提到自己的乐队和演出。"},
+        {"id":"task1-5","locator":"Task 1 第5题","prompt":"对改计划不满的是谁？","answer":"b","explanation":"女方连续提起先前的失约。"},
+        {"id":"task1-6","locator":"Task 1 第6题","prompt":"两周前谁有电影票？","answer":"b","explanation":"女方回忆自己已买票。"},
+        {"id":"task1-7","locator":"Task 1 第7题","prompt":"谁喜欢舞蹈表演？","answer":"b","explanation":"女方提起错过喜欢的舞团。"},
+        {"id":"task1-8","locator":"Task 1 第8题","prompt":"谁提出先出去吃晚饭？","answer":"a","explanation":"男方提出饭后演出、下周再看戏的折中方案。"},
+        {"id":"task2-group","locator":"Task 2 第1～6空","prompt":"按官方第2页短语库补全改计划用语，写1=…、2=…。","answer":"1=the theatre on Friday；2=next Friday；3=free then；4=go next Friday；5=out for dinner；6=I forgot","explanation":"1补地点与时间；2在建议句中补新时间；3询问届时空不空；4补可确定的行动；5建议外出吃饭；6用过去时说明忘记安排。"},
+        {"id":"preparation-group","locator":"Preparation 词语分类","prompt":"按官方第1页将词分成活动、场所、人物/团体，写各组即可。","answer":"活动：音乐会、芭蕾、戏剧、演出；场所：剧院、歌剧院、电影院、画廊；人物/团体：乐队、艺术家、音乐家、团体（英文词形见官方词库）","explanation":"先辨认词表示发生的活动、举办地点还是参与者，别把音乐会和音乐家归入同一类。"}
+      ]
+    },
+    {
+      "id":"bc-a2-talking-job","title":"Talking about your job · 介绍工作","language":"en-US","slot":"official","status":"source_verified","verifiedAt":"2026-10-04","sourceLabel":"British Council 官方 worksheet，第5页 Answers；第3～4页 Transcript。",
+      "pageUrl":"https://learnenglish.britishcouncil.org/free-resources/speaking/a2/talking-about-your-job",
+      "questionUrl":"https://learnenglish.britishcouncil.org/sites/podcasts/files/LearnEnglish-Speaking-A2-Talking-about-your-job.pdf","questionPage":1,
+      "answerUrl":"https://learnenglish.britishcouncil.org/sites/podcasts/files/LearnEnglish-Speaking-A2-Talking-about-your-job.pdf","answerPage":5,
+      "requirements":"先看官方视频并跟读，再做 Task 1～3。本页讲解 Task 1，选项 a/b 按官方原题。之后按年度表脱稿介绍自己的工作30～45秒；这部分是开放表达，不以教材人物经历当作你的答案。",
+      "questions":[
+        {"id":"task1-1","locator":"Task 1 第1题","prompt":"培训者的目的是什么？","answer":"b","explanation":"开场强调帮助学员赢，而不是放松。"},
+        {"id":"task1-2","locator":"Task 1 第2题","prompt":"Emir 负责什么部门？","answer":"a","explanation":"他介绍自己管理设计团队。"},
+        {"id":"task1-3","locator":"Task 1 第3题","prompt":"Paul 的职责是什么？","answer":"b","explanation":"他说明自己负责写作内容。"},
+        {"id":"task1-4","locator":"Task 1 第4题","prompt":"Vanya 做什么工作？","answer":"b","explanation":"她回答社交媒体及营销。"},
+        {"id":"task1-5","locator":"Task 1 第5题","prompt":"Vanya 对工作是什么态度？","answer":"a","explanation":"她明确表示热爱工作。"},
+        {"id":"task1-6","locator":"Task 1 第6题","prompt":"培训会持续多久？","answer":"b","explanation":"培训者说有四小时。"},
+        {"id":"preparation-group","locator":"Preparation a～h 分类","prompt":"按官方第1页将问题分为工作问题和一般问题。","answer":"工作：b、d、e、h；一般：a、c、f、g","explanation":"职业、职责、同事和工作优点属于工作话题；问候、居住地、周末和闲暇爱好是一般话题。"},
+        {"id":"task2-group","locator":"Task 2 第1～6题配对","prompt":"按官方第2页将六句工作用语与同义表达配对。","answer":"1=d；2=a；3=e；4=b；5=f；6=c","explanation":"依次匹配职业、部门管理、内容写作职责、具体职责、最喜欢的工作方面、同事；辨认意义，不只按相同词形配对。"},
+        {"id":"task3-group","locator":"Task 3 第1～12空","prompt":"按官方第2页补全教师工作对话，写编号答案。","answer":"1=do；2=a；3=your；4=in；5=the；6=for；7=you；8=it；9=the；10=of；11=the；12=with","explanation":"1问职业需要助动词；2职业单数名词需要冠词；3/7对应对方；4工作单位用 in；5/9/11指特定角色或对象；6/10/12是职责、部分和共事表达中的介词；8代指前文工作。"}
+      ]
+    },
+    {
+      "id":"bc-a1-be","title":"Present simple: to be · be 动词","language":"en-US","slot":"official","status":"source_verified","verifiedAt":"2026-10-04","sourceLabel":"British Council 官方 Grammar test 1 XML 的选项/正确序号；中文讲解为教学说明。",
+      "pageUrl":"https://learnenglish.britishcouncil.org/free-resources/grammar/a1-a2/present-simple-be",
+      "questionUrl":"https://learnenglish.britishcouncil.org/free-resources/grammar/a1-a2/present-simple-be",
+      "answerUrl":"https://gamedata.britishcouncil.org/d/MultipleChoice_MjQ1OTY=.xml",
+      "extraUrls":["https://gamedata.britishcouncil.org/d/MultipleChoice_MjQ1OTk=.xml"],
+      "requirements":"先做 Grammar test 1，再看官方 explanation，最后做 test 2。这里核验讲解 test 1 前4题。完整英文题干和选项在官方页；缩写按原题选项填写。",
+      "questions":[
+        {"id":"test1-1","locator":"Grammar test 1 第1题","prompt":"主语 I，表达见到对方很开心，选哪个 be 形式？","answer":"'m","explanation":"I 与 am 搭配，缩写为 I'm。"},
+        {"id":"test1-2","locator":"Grammar test 1 第2题","prompt":"主语 He，说明他是我的好友，选哪个形式？","answer":"is / 's","explanation":"第三人称单数用 is；原题正确项列出等价缩写。"},
+        {"id":"test1-3","locator":"Grammar test 1 第3题","prompt":"主语 We，否认自己是教师，选哪个形式？","answer":"'re not","explanation":"复数用 are，否定在其后加 not。"},
+        {"id":"test1-4","locator":"Grammar test 1 第4题","prompt":"主语 It，表达不重要，选哪个形式？","answer":"isn't","explanation":"单数否定是 is not，不能用 aren't。"}
+      ]
+    },
+    {
+      "id":"jlpt-n5-2018-grammar-1-3","title":"JLPT N5 2018 · 文法問題1 第1～3题","language":"ja-JP","slot":"official","edition":"2018","status":"source_verified","verifiedAt":"2026-10-04","sourceLabel":"JLPT 2018 官方练习册 N5G PDF，第3页原题；N5answer 第1页文法・读解正答表（不要用文字・语汇行）。",
+      "pageUrl":"https://www.jlpt.jp/e/samples/sampleindex.html",
+      "questionUrl":"https://www.jlpt.jp/samples/sample2018/pdf/N5G.pdf","questionPage":3,
+      "answerUrl":"https://www.jlpt.jp/samples/sample2018/pdf/N5answer.pdf","answerPage":1,
+      "requirements":"按官方 PDF 文法問題1 第1～3题选1～4。下方是中文题意摘要，不改动原题编号；完整日文题干、四个选项及注音看第3页。",
+      "questions":[
+        {"id":"grammar1-1","locator":"問題1 第1题","prompt":"坐明天的飞机回国；交通手段后的助词应选什么？","answer":"2（で）","explanation":"で 标记交通手段；这里不是目的地，不能用 に。"},
+        {"id":"grammar1-2","locator":"問題1 第2题","prompt":"上周买了包和鞋等物品；非穷尽列举用什么？","answer":"4（や）","explanation":"や 与后面的 など 配合，列举部分例子。"},
+        {"id":"grammar1-3","locator":"問題1 第3题","prompt":"每天早晨离开家；家后用什么助词？","answer":"1（を）","explanation":"を 可标记离开的场所；这是离开家，不是在家进行动作。"}
+      ]
+    },
+    {
+      "id":"jlpt-n5-2018-grammar-4-6","title":"JLPT N5 2018 · 文法問題1 第4～6题","language":"ja-JP","slot":"official","edition":"2018","status":"source_verified","verifiedAt":"2026-10-04","sourceLabel":"JLPT 2018 官方练习册 N5G PDF，第3页原题；N5answer 第1页文法・读解正答表。",
+      "pageUrl":"https://www.jlpt.jp/e/samples/sampleindex.html",
+      "questionUrl":"https://www.jlpt.jp/samples/sample2018/pdf/N5G.pdf","questionPage":3,
+      "answerUrl":"https://www.jlpt.jp/samples/sample2018/pdf/N5answer.pdf","answerPage":1,
+      "requirements":"按官方 PDF 文法問題1 第4～6题选1～4；下方题意摘要及解析与该题号对应。",
+      "questions":[
+        {"id":"grammar1-4","locator":"問題1 第4题","prompt":"昨天在超市遇见田中；见面的对象后用什么？","answer":"4（に）","explanation":"人に会う：に 标记见面的对象；超市是见面的地点。"},
+        {"id":"grammar1-5","locator":"問題1 第5题","prompt":"家里的书架是父亲去年做的；父亲后用什么？","answer":"2（が）","explanation":"が 标记制作书架的人，即动作主体。"},
+        {"id":"grammar1-6","locator":"問題1 第6题","prompt":"五个苹果合计的价钱；数量后用什么？","answer":"3（で）","explanation":"数量＋で 表示合计范围，此处是五个一起的价格。"}
+      ]
+    }
+  ]
+}

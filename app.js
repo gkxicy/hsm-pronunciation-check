@@ -8,6 +8,8 @@ const $ = (selector) => document.querySelector(selector);
 
 const state = {
   catalog: null,
+  externalExercises: null,
+  externalExercisesError: false,
   byDate: { ielts: new Map(), japanese: new Map() },
   viewedDate: "",
   sourceDate: "",
@@ -370,6 +372,49 @@ function externalDataStatus({ hasLink, completed, userAnswer }) {
   if (hasLink) return "当前只有外部链接，尚未取得真实题目；完成后请粘贴题目或实际作答。";
   return "当前题目数据不可用，等待用户录入；系统不会伪造题目或答案。";
 }
+function renderExternalExercises(course, language) {
+  const packs = globalThis.ExternalExercises?.packsForCourse(state.externalExercises, course, language) || [];
+  const wrap = el("div", { class: "external-exercises" });
+  if (!packs.length) {
+    if (course.officialUrls?.length || course.officialUrl) wrap.append(el("p", { class: "prose" },
+      state.externalExercisesError ? "已核验题目补充数据暂时加载失败，可刷新重试；原作业和课程不受影响。" : "此课程的外部题尚未逐题核验；目录不等于原题，暂不据此自动判错。若已做其他题，请在下面填写原题链接、题号及题干，保留你的原作答。"));
+    return wrap;
+  }
+  for (const pack of packs) {
+    wrap.append(el("h4", {}, `已核验具体练习：${pack.title}`), el("p", { class: "prose" }, pack.requirements),
+      el("p", { class: "prose external-data-status" }, `原题及官方答案已取得（核验：${pack.verifiedAt}）。${pack.sourceLabel}`),
+      el("div", { class: "links" }, externalLink("完整原题 / 官方 PDF", `${pack.questionUrl}${pack.questionPage ? `#page=${pack.questionPage}` : ""}`),
+        externalLink("音频 / 视频 / 在线练习", pack.pageUrl)));
+    const answerSources = el("details", { class: "answer" }, el("summary", {}, "完成后查看官方答案来源"),
+      externalLink(`官方答案${pack.answerPage ? ` · 第${pack.answerPage}页` : ""}`, `${pack.answerUrl}${pack.answerPage ? `#page=${pack.answerPage}` : ""}`));
+    wrap.append(answerSources);
+    const questions = pack.questions.map((item) => {
+      const id = globalThis.ExternalExercises.questionId(course.date, language, pack.id, item.id);
+      return {
+        id, prompt: `${pack.title}｜${item.locator}｜${item.prompt}`,
+        stem: `${item.locator}：${item.prompt}`, options: [],
+        answer: item.answer, answerStatus: "available", language,
+        source: pack.questionUrl,
+        explanation: `${item.explanation}\n核对依据：${pack.sourceLabel}`,
+      };
+    });
+    // Reuse the existing question/attempt UI; never rewrite legacy official answers.
+    wrap.append(renderStructuredPractice({date:course.date, questions, external:true}, "原题对应作答"));
+    wrap.append(el("p", { class: "prose" }, "这里显示中文题意与已核验题号，完整英文/日文题干、选项和正文请打开官方原题。未讲解的题不冒充已有逐题解析。"));
+  }
+  return wrap;
+}
+function renderExternalMaterialInput(course, language) {
+  const prefix = `external-input:${language}:${course.date}`;
+  const box = el("details", {class:"answer"}, el("summary", {}, "做了其他外部题？补充准确原题（不覆盖旧作业）"));
+  for (const [suffix, label, placeholder] of [
+    ["url", "你实际做的原题链接及题号", "填写具体篇名、官方 URL、Task/页码/题号；不要只填目录"],
+    ["question", "原题题干 / 选项 / 写作要求", "无法读取动态网页时粘贴真实题目；图表请记录数据和题目要求"],
+    ["answer-source", "官方答案来源（可选）", "官方答案链接或原题中答案位置；你的猜测不是官方答案"],
+  ]) box.append(responseField(`${prefix}:${suffix}`, label, `${course.officialTask}｜${label}`, placeholder));
+  box.append(el("p", {class:"prose"}, "以上用于定位材料，不算完成新课或答题证据。你的作答仍填在对应答案框；未取得可靠答案时保留待核验状态。"));
+  return box;
+}
 function responseField(id, label, prompt, placeholder = "先独立完成，再查看解析") {
   const record = exercise(id, prompt);
   const input = el("textarea", { placeholder }, record.response);
@@ -389,7 +434,7 @@ function doneLine(id, prompt, label = "已完成") {
 }
 function renderStructuredPractice(course, title) {
   const questions = Array.isArray(course.questions) ? course.questions : [];
-  const wrap = el("section", { class: "section structured-practice" }, el("h3", {}, title), el("p", { class: "prose" }, "系统已获得 Excel 中的真实题目。逐题答案仅在表格确实提供时显示。"));
+  const wrap = el("section", { class: "section structured-practice" }, el("h3", {}, title), el("p", { class: "prose" }, course.external ? "下面的题号、答案依据官方材料核验，中文题意是摘要；完整原题请查看上方官方入口。" : "系统已获得 Excel 中的真实题目。逐题答案仅在表格确实提供时显示。"));
   if (!questions.length) {
     wrap.append(responseField(`${course.date}:practice`, "你的答案", course.practice));
     wrap.append(answerDetails(course.explanation));
@@ -415,10 +460,12 @@ function renderStructuredPractice(course, title) {
       card.append(answerDetails(`答案：${question.answer}${question.explanation ? `\n解析：${question.explanation}` : ""}`, "完成后查看本题答案与解析"));
       card.append(el("div", { class: "buttons" },
         el("button", { type: "button", class: "secondary", onclick: () => {
+          if (!record.response?.trim()) { alert("请先填写你的实际答案，再核对结果。"); return; }
           saveLearningAttempt({ questionId: question.id, userAnswer: record.response, result: "correct", source: question.source, language: question.language });
           markChanged();
         } }, "核对后：答案正确"),
         el("button", { type: "button", class: "secondary", onclick: () => {
+          if (!record.response?.trim()) { alert("请先填写你的实际答案，空白不记为知识错误。"); return; }
           saveLearningAttempt({ questionId: question.id, userAnswer: record.response, result: "knowledge_error", source: question.source, language: question.language });
           markChanged();
         } }, "核对后：需要复习")));
@@ -457,9 +504,11 @@ function renderIelts(course) {
   check.append(responseField(`ielts:${course.date}:check`, "你的口头验收记录", course.check, "记下答不上来的点；不必重复抄题")); root.append(check);
   root.append(renderStructuredPractice(course, "今日原创练习"));
   const official = section("配套 / 官方练习", course.officialTask, externalLinks("打开原题或练习", course.officialUrls?.length ? course.officialUrls : course.officialUrl));
+  official.append(renderExternalExercises(course, "en-US"), renderExternalMaterialInput(course, "en-US"));
   const task = englishTask(course.officialTask);
   const officialStatus = el("p", { class: "prose external-data-status" }, externalDataStatus({ hasLink: Boolean(course.officialUrls?.length || course.officialUrl), completed: task.done, userAnswer: task.userAnswer }));
   official.append(officialStatus);
+  official.append(el("p", {class:"prose"}, "下方为原有整份作业记录，与上方新增逐题作答分开保存；旧答案不会自动绑定到新选篇目。"));
   const done = el("input", { type: "checkbox", checked: task.done });
   done.addEventListener("change", () => {
     task.done = done.checked;
@@ -582,6 +631,8 @@ function renderJapanese(course) {
   const check = section("快速闭卷验收", course.check); check.append(responseField(`japanese:${course.date}:check`, "你的验收记录", course.check)); root.append(check);
   root.append(renderStructuredPractice(course, "今日原创练习题"));
   const official = section("JLPT / 官方题", course.officialTask, externalLinks("打开官方题", course.officialUrls?.length ? course.officialUrls : course.officialUrl));
+  official.append(renderExternalExercises(course, "ja-JP"));
+  if (course.officialUrls?.length) official.append(renderExternalMaterialInput(course, "ja-JP"));
   const officialDoneRecord = exercise(`japanese:${course.date}:official`, course.officialTask);
   const officialNotesRecord = exercise(`japanese:${course.date}:official-notes`, course.officialTask);
   official.append(
@@ -596,7 +647,9 @@ function renderJapanese(course) {
     ...externalLinks("打开音频", course.audioUrls?.length ? course.audioUrls : course.audioUrl),
     ...externalLinks("打开听力题册", course.listeningBookUrls?.length ? course.listeningBookUrls : course.listeningBookUrl),
   ];
-  const listening = section("听力", course.listening, listeningLinks); listening.append(doneLine(`japanese:${course.date}:listening`, course.listening)); root.append(listening);
+  const listening = section("听力", course.listening, listeningLinks);
+  if (globalThis.ExternalExercises?.listeningMismatch(course)) listening.append(el("p", {class:"status warn"}, "材料待核验：表格里的音频与听力题册年份不同，不能直接套用题册答案；本次不做该音频的自动判错或逐题答案匹配。先核对同年份题册再作答。"));
+  listening.append(doneLine(`japanese:${course.date}:listening`, course.listening)); root.append(listening);
   root.append(renderSpeechPractice({ lines: japaneseLines(course), language: "ja-JP", title: "日语跟读录音与回放" }));
 }
 function carryoverRecordingTarget(item) {
@@ -665,7 +718,7 @@ function render() {
   state.draft.lessonTitle = `${state.sourceDate} · 雅思 ${ielts.day} + 日语 ${japanese.day}`;
   if (state.planMissing) setStatus(`没有读取到任何已发布的学习进度。为防止按日期跳级，页面已安全停在 ${state.sourceDate}，不会自动进入今天对应的日历课程。`, "warn");
   else if (state.planInheritedFrom) setStatus(`今天的云端计划尚未生成，已自动沿用 ${state.planInheritedFrom} 的有效进度：${state.sourceDate}。不会按日历日期跳级。`, "warn");
-  else if (state.plan?.fullDayRepeat) setStatus(`前一天没有学习提交：今天完整重学 ${state.sourceDate} 的任务，不进入下一天。`, "warn");
+  else if (state.plan?.fullDayRepeat) setStatus(`今天继续 ${state.sourceDate} 的当前课程，不进入下一天；已完成内容和提交记录保留。\n原因：${state.plan.reason || "尚无当前新课已完成的可靠证据"}`, "warn");
   else if (repeatOnly) setStatus(`昨晚未通过项目较多：今天只重做列出的未通过项目；已经完成的作业不重做。\n原因：${state.plan.reason || "根据晚间复盘调整"}`, "warn");
   else if (state.plan?.carryover?.length) setStatus(`今天进入 ${state.sourceDate} 的新内容，并追加 ${state.plan.carryover.length} 个少量补练项目。已通过内容不重做。`, "warn");
   else setStatus(`正在学习年度计划 ${state.sourceDate}：雅思 ${ielts.day} + 日语 ${japanese.day}。页面内容来自两份 365 天表格。`);
@@ -891,6 +944,11 @@ async function init() {
   try {
     const response = await fetch(DATA_URL, { cache: "no-store" }); if (!response.ok) throw new Error(`HTTP ${response.status}`); state.catalog = await response.json();
     if (state.catalog.ielts.length !== 365 || state.catalog.japanese.length !== 365) throw new Error("年度数据不是完整 365 天");
+    try {
+      const extra = await fetchWithTimeout("external-exercises.json?v=20261004-official-materials-1", {cache:"no-store"}, 10000, "原题补充数据读取超时");
+      if (!extra.response.ok || !Array.isArray(extra.data.packs) || !Array.isArray(extra.data.bindings)) throw new Error("原题补充数据无效");
+      state.externalExercises = extra.data;
+    } catch { state.externalExercisesError = true; }
     state.catalog.ielts.forEach((day) => state.byDate.ielts.set(day.date, day)); state.catalog.japanese.forEach((day) => state.byDate.japanese.set(day.date, day));
     const input = $("#date"); input.min = state.catalog.startDate; input.max = state.catalog.endDate; const today = isoLocalDate(); input.value = today < state.catalog.startDate ? state.catalog.startDate : today > state.catalog.endDate ? state.catalog.endDate : today;
     input.addEventListener("change", () => {
