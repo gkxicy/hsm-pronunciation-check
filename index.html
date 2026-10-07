@@ -12,6 +12,7 @@
   <style>
     .record-status{margin:12px 0;padding:11px 13px;border-radius:9px;background:#eef4ef;color:var(--ink);font:700 13px/1.55 "Microsoft YaHei UI",sans-serif}.record-status.active{background:#fff0dd;border:1px solid #e5a65b}.record-line.recording{border:2px solid var(--red);background:#fff4f1}.record-line .record-stop{background:var(--red);color:#fff}.record-playback{margin-top:12px;padding:12px;border-radius:9px;background:#eef4ef}.record-playback strong{display:block;margin-bottom:5px}.record-playback audio{margin-top:4px}.dashboard{margin:18px 0}.dashboard-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}.metric{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px}.metric strong{display:block;font-size:23px;color:var(--green)}.today-list{margin:12px 0 0;padding-left:20px;line-height:1.7}.focus-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}.focus-clock{font:900 24px/1 "Microsoft YaHei UI",sans-serif;color:var(--ink);min-width:78px}.question-card{border:1px solid var(--line);background:#fff;border-radius:10px;padding:13px;margin-top:10px}.question-card h4{margin:0 0 10px;line-height:1.55}.question-options{margin:0 0 10px;padding-left:22px;line-height:1.7}.external-data-status{margin-top:10px;padding:10px;border-radius:8px;background:#fff4de}.history-list{display:grid;gap:8px}.history-item{display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid var(--line);padding:8px 0}@media(max-width:760px){.dashboard-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.question-card{padding:11px}}
   </style>
+  <style>.actionable-practice>.section{padding:14px 0;border:0}.sentence-answer{min-height:88px}.answer-state:empty{display:none}.answer-state{font-weight:700;color:var(--green)}.external-help>.section{padding:12px 0}.sentence-revision select{max-width:100%}</style>
 </head>
 <body>
 <main>
@@ -30,10 +31,11 @@
   <div id="courses" class="day-grid hidden"><article id="ielts" class="course"></article><article id="japanese" class="course"></article></div>
   <section id="feedback" class="course hidden"><div class="course-head"><small>晚间复盘结果</small><h2>针对本次提交的解析</h2></div><div id="feedbackList" class="section"></div></section>
   <section id="history" class="course"><div class="course-head"><small>只统计真实保存记录</small><h2>学习历史与进度</h2><p>浏览器内显示最近记录；Cloudflare 的短期数据会由晚间流程归档进 Obsidian 作答历史。</p></div><div id="historyList" class="section history-list"></div></section>
-  <section id="submitArea" class="submit-box hidden"><h2>完成全部任务并提交复盘</h2><p>填写过程会自动暂存到本机和 Cloudflare。北京时间 23:00 前提交，等待当晚定时复盘；23:00 后提交，云端才会启动一次补充复盘并更新后续计划。</p><button id="submit" type="button">最终提交今日作业</button><div id="submitStatus"></div><div class="version">页面版本：20261004-official-materials-1</div></section>
+  <section id="submitArea" class="submit-box hidden"><h2>完成全部任务并提交复盘</h2><p>填写过程会自动暂存到本机和 Cloudflare。北京时间 23:00 前提交，等待当晚定时复盘；23:00 后提交，云端才会启动一次补充复盘并更新后续计划。</p><button id="submit" type="button">最终提交今日作业</button><div id="submitStatus"></div><div class="version">页面版本：20261007-actionable-practice-1</div></section>
 </main>
 <dialog id="quiz" class="quiz"><button id="closeQuiz" class="secondary" type="button">关闭</button><h2 id="quizTitle">随机词测</h2><div id="quizMeta"></div><div id="quizQuestion" class="quiz-question"></div><label>你的答案<input id="quizAnswer" autocomplete="off" spellcheck="false"></label><button id="checkQuiz" type="button">提交答案</button><div id="quizResult" class="quiz-result"></div></dialog>
 <script src="external-exercises.js?v=20261004-official-materials-1"></script>
-<script src="app.js?v=20261004-official-materials-1"></script>
+<script src="learning-activities.js?v=20261007-actionable-practice-1"></script>
+<script src="app.js?v=20261007-actionable-practice-1"></script>
 </body>
 </html>

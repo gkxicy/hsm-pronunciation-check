@@ -10,6 +10,8 @@ const state = {
   catalog: null,
   externalExercises: null,
   externalExercisesError: false,
+  reviewHistory: [],
+  reviewHistoryStatus: "idle",
   byDate: { ielts: new Map(), japanese: new Map() },
   viewedDate: "",
   sourceDate: "",
@@ -434,47 +436,147 @@ function doneLine(id, prompt, label = "已完成") {
 }
 function renderStructuredPractice(course, title) {
   const questions = Array.isArray(course.questions) ? course.questions : [];
-  const wrap = el("section", { class: "section structured-practice" }, el("h3", {}, title), el("p", { class: "prose" }, course.external ? "下面的题号、答案依据官方材料核验，中文题意是摘要；完整原题请查看上方官方入口。" : "系统已获得 Excel 中的真实题目。逐题答案仅在表格确实提供时显示。"));
+  const wrap = el("section", { class: "section structured-practice" }, el("h3", {}, title));
+  if (course.external) wrap.append(el("p", {class:"prose"}, "需要本站帮助时再填写；已在原网站做完的题无需重复作答。完整原题请查看官方入口。"));
+  const sentenceTask = questions.length && questions.every(q => q.source === "lesson_vocabulary_sentence");
+  if (sentenceTask) wrap.append(el("p", {class:"prose"}, "每个词各写一句，内容与你有关即可。检查主谓、时态和标点；提交后结合你的原句批改。"));
   if (!questions.length) {
-    wrap.append(responseField(`${course.date}:practice`, "你的答案", course.practice));
-    wrap.append(answerDetails(course.explanation));
     return wrap;
   }
   questions.forEach((question, index) => {
     const record = exercise(question.id, question.prompt);
     record.kind = "quiz";
-    const input = el("textarea", { placeholder: "先独立作答，再查看答案或解析" });
+    const input = el("textarea", { placeholder: sentenceTask ? "用上面的词写一句话" : "先独立作答，再查看答案或解析", class:sentenceTask ? "sentence-answer" : "" });
+    const outcome = el("p", {class:"prose answer-state", "aria-live":"polite"});
+    const existing = state.draft.attempts.find(item => item.question_id === question.id);
+    outcome.textContent = existing?.result === "correct" ? "已核对正确" : existing?.result === "knowledge_error" ? "已标记需要复习" : "";
     input.value = record.response;
     input.addEventListener("input", () => {
       record.response = input.value;
       saveLearningAttempt({ questionId: question.id, userAnswer: input.value, source: question.source, language: question.language });
+      outcome.textContent = "";
       markChanged();
     });
     const card = el("article", { class: "question-card" },
       el("h4", {}, `${index + 1}. ${question.stem || question.prompt}`));
+    if (question.previousAnswer) card.append(answerDetails(`你上次的答案：${question.previousAnswer}\n记录时间：${question.previousTime || "此前"}`, "查看上次作答"));
     if (Array.isArray(question.options) && question.options.length) {
       card.append(el("ul", { class: "question-options" }, question.options.map((option) => el("li", {}, `${option.id} ${option.text}`))));
     }
-    card.append(el("label", {}, "你的答案", input));
+    card.append(el("label", {}, sentenceTask ? "你的句子" : "你的答案", input));
     if (question.answerStatus === "available") {
       card.append(answerDetails(`答案：${question.answer}${question.explanation ? `\n解析：${question.explanation}` : ""}`, "完成后查看本题答案与解析"));
       card.append(el("div", { class: "buttons" },
         el("button", { type: "button", class: "secondary", onclick: () => {
           if (!record.response?.trim()) { alert("请先填写你的实际答案，再核对结果。"); return; }
           saveLearningAttempt({ questionId: question.id, userAnswer: record.response, result: "correct", source: question.source, language: question.language });
+          outcome.textContent = "已核对正确";
           markChanged();
         } }, "核对后：答案正确"),
         el("button", { type: "button", class: "secondary", onclick: () => {
           if (!record.response?.trim()) { alert("请先填写你的实际答案，空白不记为知识错误。"); return; }
           saveLearningAttempt({ questionId: question.id, userAnswer: record.response, result: "knowledge_error", source: question.source, language: question.language });
+          outcome.textContent = "已标记需要复习";
           markChanged();
         } }, "核对后：需要复习")));
-    } else {
-      card.append(el("p", { class: "prose" }, "这一天没有可靠的逐题标准答案，系统不会伪造答案或自动判错；保留你的作答，等待人工批改。"));
+    } else if (!sentenceTask) {
+      card.append(el("p", { class: "prose" }, question.explanation || "开放式作答，没有唯一标准答案。提交后结合你的原文批改。"));
     }
+    card.append(outcome);
     wrap.append(card);
   });
   return wrap;
+}
+function savedExerciseDetails(ids, title = "查看此前保存的作业") {
+  const records = state.draft.languageExercises.filter(item => ids.includes(item.id) && item.response?.trim());
+  if (!records.length) return null;
+  return el("details", {class:"answer saved-work"}, el("summary", {}, title), records.map(item =>
+    el("div", {class:"prose"}, el("strong", {}, item.prompt), el("p", {}, item.response))));
+}
+function reviewDrafts() {
+  const drafts = [...state.reviewHistory];
+  const earliest = addIsoDays(state.viewedDate, -7);
+  for (let index = 0; index < localStorage.length; index++) {
+    const key = localStorage.key(index);
+    if (!key?.startsWith(LOCAL_PREFIX) || !key.endsWith(`:${state.deviceId}`)) continue;
+    try {
+      const draft = JSON.parse(localStorage.getItem(key));
+      if (draft.date >= earliest && draft.date <= state.viewedDate) drafts.push(draft);
+    } catch { /* A damaged draft does not invalidate other saved answers. */ }
+  }
+  drafts.push(state.draft);
+  return drafts;
+}
+function renderReviewQuestions(container, language) {
+  const questions = LearningActivities.reviewQuestions(state.catalog, state.externalExercises, reviewDrafts(), language);
+  container.replaceChildren(el("h3", {}, `实际错题重练 · ${questions.length} 题`));
+  container.append(el("p", {class:"prose"}, "从最近 7 天本机及同一设备云端记录中选取，最多 3 题；已核对改对的题不再列入。"));
+  if (state.reviewHistoryStatus === "loading") container.append(el("p", {class:"prose"}, "正在补充云端作答记录…"));
+  if (state.reviewHistoryStatus === "partial") container.append(el("p", {class:"prose"}, "部分云端记录暂未读到，当前只显示已读取的真实错题。"),
+    el("button", {type:"button", class:"secondary", onclick:loadReviewHistory}, "重试读取错题"));
+  if (questions.length) container.append(renderStructuredPractice({questions}, "先重做，再展开答案核对"));
+  else if (state.reviewHistoryStatus !== "loading") container.append(el("p", {class:"prose"}, "当前已读取的记录里没有可定位的未改正错题，这项无需填写，可以继续下面的练习。"));
+}
+async function loadReviewHistory() {
+  const date = state.viewedDate;
+  if (state.reviewHistoryStatus === "loading") return;
+  state.reviewHistoryStatus = "loading";
+  document.querySelectorAll(".actual-review").forEach(node => renderReviewQuestions(node, node.dataset.language));
+  const results = await Promise.all(Array.from({length:7}, async (_, index) => {
+    try {
+      const query = new URLSearchParams({date:addIsoDays(date, -index-1), deviceId:state.deviceId});
+      const {response,data} = await fetchWithTimeout(`${API}/draft?${query}`, {cache:"no-store"}, 8000, "作答历史读取超时");
+      if (!response.ok || !data.ok) throw new Error("history unavailable");
+      return {ok:true, draft:data.draft};
+    } catch { return {ok:false}; }
+  }));
+  if (state.viewedDate !== date) return;
+  state.reviewHistory = results.filter(r => r.ok && r.draft).map(r => r.draft);
+  state.reviewHistoryStatus = results.every(r => r.ok) ? "loaded" : "partial";
+  document.querySelectorAll(".actual-review").forEach(node => renderReviewQuestions(node, node.dataset.language));
+}
+function renderSentenceRevision(course, questions) {
+  const box = el("details", {class:"answer sentence-revision"}, el("summary", {}, "写完后选一句润色（可选）"));
+  const choices = el("select", {"aria-label":"选择要修改的自己的句子"});
+  const preview = el("p", {class:"prose"});
+  const id = `en-${course.date}-revision`;
+  const editor = responseField(id, "修改后的句子", "润色自己选中的原句", "先完成造句，再选择一句修改");
+  const refresh = () => {
+    choices.replaceChildren(el("option", {value:""}, "选择你已经写好的句子"));
+    for (const question of questions) {
+      const record = state.draft.languageExercises.find(item => item.id === question.id);
+      if (record?.response?.trim()) choices.append(el("option", {value:question.id}, record.response));
+    }
+    preview.textContent = choices.options.length > 1 ? "选一句，检查主谓、时态和用词；不确定时可直接提交原句等待批改。" : "先完成上面的造句，这里会列出你自己的原句。";
+  };
+  choices.addEventListener("change", () => {
+    const original = state.draft.languageExercises.find(item => item.id === choices.value);
+    preview.textContent = original ? `你的原句：${original.response}` : "请选择一句。";
+    const record = exercise(id);
+    record.prompt = original ? `润色你的原句：${original.response}`.slice(0,300) : record.prompt;
+  });
+  box.addEventListener("toggle", () => { if (box.open) refresh(); });
+  box.append(choices, preview, editor);
+  return box;
+}
+function renderCoursePractice(course, language) {
+  const activity = LearningActivities.practiceForCourse(state.catalog, course);
+  const root = el("section", {class:"section actionable-practice"});
+  if (activity.actions.includes("review")) {
+    const review = el("div", {class:"actual-review", "data-language":language});
+    renderReviewQuestions(review, language); root.append(review);
+  }
+  if (activity.questions.length) root.append(renderStructuredPractice({...course, questions:activity.questions}, "今日练习 · 直接作答"));
+  if (activity.actions.includes("external")) root.append(el("p", {class:"prose"}, "听力、阅读请完成下面原网站的题目并核对答案；需要讲解的题再展开求助入口。"));
+  if (activity.actions.includes("revision")) root.append(renderSentenceRevision(course, activity.questions));
+  root.append(savedExerciseDetails(activity.retired.map(q => q.id).concat(`${language === "en-US" ? "ielts" : "japanese"}:${course.date}:check`)));
+  return root;
+}
+function renderOptionalExternalHelp(course, language, legacyContent = []) {
+  const details = el("details", {class:"answer external-help"}, el("summary", {}, "需要本站解析 / 批改，或查看以前作答（可选）"));
+  details.append(el("p", {class:"prose"}, "原网站已有答案和解析时，直接在那里完成、核对即可。只有需要进一步讲解或作文批改时，才在这里提供原题与自己的作答。"),
+    renderExternalExercises(course, language), renderExternalMaterialInput(course, language), legacyContent);
+  return details;
 }
 function renderVocabulary(course, language, prefix) {
   const wrap = el("section", { class: "section" }, el("h3", {}, `核心词汇 · ${course.vocabulary.length} 个`));
@@ -499,20 +601,16 @@ function renderIelts(course) {
   root.append(section("今日任务", course.task));
   root.append(section("中文课程 / 讲解", course.course, externalLinks("打开当天讲解", course.courseUrls?.length ? course.courseUrls : course.courseUrl)));
   root.append(renderVocabulary(course, "en-US", "英语"));
-  root.append(renderSpeechPractice({ lines: englishLines(course), language: "en-US", title: "英语词汇朗读录音与回放" }));
-  const check = section("5 分钟闭卷验收", course.check);
-  check.append(responseField(`ielts:${course.date}:check`, "你的口头验收记录", course.check, "记下答不上来的点；不必重复抄题")); root.append(check);
-  root.append(renderStructuredPractice(course, "今日原创练习"));
+  root.append(renderSpeechPractice({ lines: englishLines(course), language: "en-US", title: "英语句子 / 短文朗读" }));
+  root.append(renderCoursePractice(course, "en-US"));
   const official = section("配套 / 官方练习", course.officialTask, externalLinks("打开原题或练习", course.officialUrls?.length ? course.officialUrls : course.officialUrl));
-  official.append(renderExternalExercises(course, "en-US"), renderExternalMaterialInput(course, "en-US"));
   const task = englishTask(course.officialTask);
-  const officialStatus = el("p", { class: "prose external-data-status" }, externalDataStatus({ hasLink: Boolean(course.officialUrls?.length || course.officialUrl), completed: task.done, userAnswer: task.userAnswer }));
-  official.append(officialStatus);
-  official.append(el("p", {class:"prose"}, "下方为原有整份作业记录，与上方新增逐题作答分开保存；旧答案不会自动绑定到新选篇目。"));
+  const packs = globalThis.ExternalExercises?.packsForCourse(state.externalExercises, course, "en-US") || [];
+  packs.forEach(pack => official.append(externalLink(`本课具体练习：${pack.title}`, pack.pageUrl || pack.questionUrl)));
+  official.append(el("p", {class:"prose"}, "在原网站完成练习并核对答案，然后勾选完成。无需把全套题和答案再抄一遍。"));
   const done = el("input", { type: "checkbox", checked: task.done });
   done.addEventListener("change", () => {
     task.done = done.checked;
-    officialStatus.textContent = externalDataStatus({ hasLink: Boolean(course.officialUrls?.length || course.officialUrl), completed: task.done, userAnswer: task.userAnswer });
     markChanged();
   });
   const score = el("input", { placeholder: "例如 7/10", value: task.score }); score.value = task.score;
@@ -520,13 +618,17 @@ function renderIelts(course) {
   const answer = el("textarea", { placeholder: "粘贴或填写你实际提交的答案" }); answer.value = task.userAnswer;
   answer.addEventListener("input", () => {
     task.userAnswer = answer.value;
-    officialStatus.textContent = externalDataStatus({ hasLink: Boolean(course.officialUrls?.length || course.officialUrl), completed: task.done, userAnswer: task.userAnswer });
     saveLearningAttempt({ questionId: `en-${course.date}-official`, userAnswer: answer.value, source: course.officialUrl || "external_official", language: "en-US" });
     markChanged();
   });
   const evidence = el("textarea", { placeholder: "题号、原文/音频定位、错因；晚间复盘会根据你的实际答案批改" }); evidence.value = task.evidence;
   evidence.addEventListener("input", () => { task.evidence = evidence.value; markChanged(); });
-  official.append(el("label", { class: "checkline" }, done, "已完成原题"), el("div", { class: "field" }, el("label", {}, "得分", score)), el("div", { class: "field" }, el("label", {}, "你的实际答案", answer)), el("div", { class: "field" }, el("label", {}, "错题定位 / 证据", evidence)));
+  official.append(el("label", { class: "checkline" }, done, "已在原网站完成并核对答案"),
+    el("details", {class:"answer"}, el("summary", {}, `记录得分（可选）${task.score ? ` · ${task.score}` : ""}`), el("label", {}, "原网站得分", score)),
+    renderOptionalExternalHelp(course, "en-US", [
+      el("h4", {}, task.userAnswer ? "此前保存的原作答" : "需要进一步批改的作答"),
+      el("div", {class:"field"}, el("label", {}, "作文原文 / 需要讲解的那道题的答案", answer)),
+      el("div", {class:"field"}, el("label", {}, "不明白的地方（可选）", evidence))]));
   root.append(official, section("今日完成标准", course.standard));
 }
 function japaneseLines(course) {
@@ -534,7 +636,8 @@ function japaneseLines(course) {
   return [...new Set([...kana, ...course.vocabulary.map(([word]) => word)])].slice(0, 20);
 }
 function englishLines(course) {
-  return [...new Set(course.vocabulary.map(([word]) => String(word || "").trim()).filter(Boolean))].slice(0, 20);
+  const sentences = LearningActivities.readingLines(course);
+  return sentences.length > 1 ? [...sentences, sentences.join(" ")] : sentences;
 }
 function manuallyConfirmPronunciation(index, target, options = {}) {
   const context = {
@@ -582,7 +685,8 @@ function renderSpeechPractice({ lines, language, title }) {
   state.draft.recordingSets[language].sentences = lines;
   const sectionEl = el("section", { class: "section speech-practice", "data-language": language },
     el("h3", {}, title),
-    el("p", { class: "prose" }, "先听参考音，再任选一项录音。你读完后手动停止，页面会立即提供自己的录音回放。当前只做可靠的朗读内容匹配与容错，不冒充专业音素评分。"));
+    el("p", { class: "prose" }, "先听参考音，再任选一项录音；读完后手动结束并回放。反馈表示朗读内容的匹配情况，暂不评估音素和口音质量。"));
+  if (language === "en-US") sectionEl.append(el("p", {class:"prose"}, "按当天词汇编写的朗读示例：可以任选一句，也可以直接读最后一项整段短文。词汇区仍可单独听单词发音。"));
   const statusText = state.recordingRequesting ? "正在请求麦克风权限，请在浏览器提示中允许录音…"
     : state.recordingAssessing ? "录音已完成，可立即回放；正在识别，请稍候（最多约 30 秒）…"
     : state.recordingStopping
@@ -614,7 +718,7 @@ function renderSpeechPractice({ lines, language, title }) {
       : null;
     if (confirmButton) confirmButton.disabled = recordingBusy();
     const row = el("div", { class: `record-line ${state.recordingKey === key ? "current" : ""} ${isCurrentRecording || isCurrentStopping ? "recording" : ""}` },
-      el("b", {}, `${index + 1}. ${line}`),
+      el("b", {}, `${language === "en-US" && index === lines.length - 1 && lines.length > 1 ? "整段朗读" : index + 1}. ${line}`),
       el("div", {}, resultText),
       el("div", { class: "buttons" }, listenButton, recordButton, confirmButton));
     if (state.audioUrl && state.audioKey === key) row.append(el("div", { class: "record-playback" }, el("strong", {}, "你的录音回放"), el("audio", { controls: "", src: state.audioUrl })));
@@ -628,28 +732,25 @@ function renderJapanese(course) {
   root.append(el("header", { class: "course-head" }, el("small", {}, `${course.day} · ${course.stage}`), el("h2", {}, "日语 N2 路线"), el("p", {}, `${course.duration}｜从五十音开始，按年度表逐日推进。`)));
   root.append(section("今日假名 / 发音", course.pronunciation), section("今日学习任务", course.task), section("当天视频课程", course.course, externalLinks("打开当天视频", course.courseUrls?.length ? course.courseUrls : course.courseUrl)));
   root.append(renderVocabulary(course, "ja-JP", "日语"));
-  const check = section("快速闭卷验收", course.check); check.append(responseField(`japanese:${course.date}:check`, "你的验收记录", course.check)); root.append(check);
-  root.append(renderStructuredPractice(course, "今日原创练习题"));
+  root.append(renderCoursePractice(course, "ja-JP"));
   const official = section("JLPT / 官方题", course.officialTask, externalLinks("打开官方题", course.officialUrls?.length ? course.officialUrls : course.officialUrl));
-  official.append(renderExternalExercises(course, "ja-JP"));
-  if (course.officialUrls?.length) official.append(renderExternalMaterialInput(course, "ja-JP"));
-  const officialDoneRecord = exercise(`japanese:${course.date}:official`, course.officialTask);
-  const officialNotesRecord = exercise(`japanese:${course.date}:official-notes`, course.officialTask);
-  official.append(
-    el("p", { class: "prose external-data-status" }, externalDataStatus({ hasLink: Boolean(course.officialUrls?.length || course.officialUrl), completed: officialDoneRecord.response === "已完成", userAnswer: officialNotesRecord.response })),
-    doneLine(`japanese:${course.date}:official`, course.officialTask),
-    responseField(`japanese:${course.date}:official-notes`, "答案 / 错题记录", course.officialTask, "完成正式题后填写"),
-    answerDetails(course.officialExplanation, "完成后查看官方正答 / 解析说明"),
+  if (course.officialUrls?.length || course.officialUrl) official.append(
+    doneLine(`japanese:${course.date}:official`, course.officialTask, "已完成并核对原题答案"),
+    renderOptionalExternalHelp(course, "ja-JP", [
+      responseField(`japanese:${course.date}:official-notes`, "需要讲解的题与自己的答案（可选）", course.officialTask, "只写需要帮助的题，无需重复全套答案"),
+      answerDetails(course.officialExplanation, "官方正答 / 解析说明")])
   );
+  else official.append(savedExerciseDetails([`japanese:${course.date}:official-notes`]));
   root.append(official);
-  const reading = section("阅读", course.reading, externalLinks("打开阅读材料", course.readingUrls?.length ? course.readingUrls : course.readingUrl)); reading.append(doneLine(`japanese:${course.date}:reading`, course.reading)); root.append(reading);
+  const reading = section("阅读", course.reading, externalLinks("打开阅读材料", course.readingUrls?.length ? course.readingUrls : course.readingUrl));
+  if (course.readingUrls?.length || course.readingUrl) reading.append(doneLine(`japanese:${course.date}:reading`, course.reading)); root.append(reading);
   const listeningLinks = [
     ...externalLinks("打开音频", course.audioUrls?.length ? course.audioUrls : course.audioUrl),
     ...externalLinks("打开听力题册", course.listeningBookUrls?.length ? course.listeningBookUrls : course.listeningBookUrl),
   ];
   const listening = section("听力", course.listening, listeningLinks);
   if (globalThis.ExternalExercises?.listeningMismatch(course)) listening.append(el("p", {class:"status warn"}, "材料待核验：表格里的音频与听力题册年份不同，不能直接套用题册答案；本次不做该音频的自动判错或逐题答案匹配。先核对同年份题册再作答。"));
-  listening.append(doneLine(`japanese:${course.date}:listening`, course.listening)); root.append(listening);
+  if (listeningLinks.length) listening.append(doneLine(`japanese:${course.date}:listening`, course.listening)); root.append(listening);
   root.append(renderSpeechPractice({ lines: japaneseLines(course), language: "ja-JP", title: "日语跟读录音与回放" }));
 }
 function carryoverRecordingTarget(item) {
@@ -734,8 +835,10 @@ async function changeDate(date) {
   try {
   if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
   state.viewedDate = date; state.sourceDate = state.catalog.startDate; state.audioUrl = ""; state.audioTarget = ""; state.audioKey = ""; state.recordingIndex = -1; state.recordingKey = ""; state.recordingContext = null;
+  state.reviewHistory = []; state.reviewHistoryStatus = "idle";
   $("#loading").classList.remove("hidden"); $("#courses").classList.add("hidden"); $("#submitArea").classList.add("hidden");
   await Promise.all([loadPlan(), loadDraft()]); loadFocusTimer(); render();
+  if (document.querySelector(".actual-review")) loadReviewHistory();
   } finally { state.dateLoading = false; $("#date").disabled = false; }
 }
 function shuffled(items) { const copy = [...items]; for (let i = copy.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [copy[i], copy[j]] = [copy[j], copy[i]]; } return copy; }
